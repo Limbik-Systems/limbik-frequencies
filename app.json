@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Limbik Frequencies",
+    "slug": "limbik-frequencies",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#151821",
+    "primaryColor": "#2196F3",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.limbikfreq.radio",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "Limbik Frequencies does not record audio; this permission is only referenced by the media playback engine."
+      },
+      "entitlements": {
+        "com.apple.developer.carplay-audio": true
+      }
+    },
+    "android": {
+      "package": "com.limbikfreq.radio",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "INTERNET",
+        "WAKE_LOCK",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/icon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ],
+      "./plugins/withCarPlayAndAndroidAuto"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9d4c4833-c8a9-48e0-b868-4fbb1ba000ac"
+      }
+    },
+    "owner": "limbik"
+  }
+}
