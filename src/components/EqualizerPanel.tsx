@@ -136,6 +136,20 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
   graphWidthRef.current = graphWidth;
   const onUpdateBandRef = useRef(onUpdateBand);
   onUpdateBandRef.current = onUpdateBand;
+  const graphRef = useRef<View>(null);
+  const graphOriginRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const refreshGraphOrigin = () => {
+    graphRef.current?.measureInWindow((wx, wy, ww) => {
+      if (typeof wx === 'number' && typeof wy === 'number') {
+        graphOriginRef.current = { x: wx, y: wy };
+      }
+      if (typeof ww === 'number' && ww > 0) {
+        graphWidthRef.current = ww;
+        setGraphWidth(ww);
+      }
+    });
+  };
 
   const curveDbValues = useMemo(() => {
     const pts: number[] = [];
@@ -159,37 +173,56 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (evt) => {
         const w = Math.max(1, graphWidthRef.current);
-        const x = evt.nativeEvent.locationX;
-        const y = evt.nativeEvent.locationY;
+        const pageX = evt.nativeEvent.pageX;
+        const pageY = evt.nativeEvent.pageY;
 
-        // Pick nearest band node to touch point
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        settingsRef.current.bands.forEach((b, idx) => {
-          const bx = freqToNorm(b.freq) * w;
-          const by = ((12 - b.gain) / 24) * GRAPH_HEIGHT;
-          const d = Math.hypot(x - bx, y - by);
-          if (d < bestDist) {
-            bestDist = d;
-            bestIdx = idx;
+        const applyGrant = (ox: number, oy: number, widthNow: number) => {
+          const x = Math.max(0, Math.min(widthNow, pageX - ox));
+          const y = Math.max(0, Math.min(GRAPH_HEIGHT, pageY - oy));
+
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          settingsRef.current.bands.forEach((b, idx) => {
+            const bx = freqToNorm(b.freq) * widthNow;
+            const by = ((12 - b.gain) / 24) * GRAPH_HEIGHT;
+            const d = Math.hypot(x - bx, y - by);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = idx;
+            }
+          });
+          activeDragBandRef.current = bestIdx;
+          setSelectedBand(bestIdx);
+
+          if (settingsRef.current.enabled) {
+            const nextFreq = normToFreq(x / widthNow);
+            const nextGain =
+              Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
+            onUpdateBandRef.current(bestIdx, { freq: nextFreq, gain: nextGain });
           }
-        });
-        activeDragBandRef.current = bestIdx;
-        setSelectedBand(bestIdx);
+        };
 
-        if (settingsRef.current.enabled) {
-          const nextFreq = normToFreq(x / w);
-          const nextGain = Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
-          onUpdateBandRef.current(bestIdx, { freq: nextFreq, gain: nextGain });
+        if (graphRef.current && typeof graphRef.current.measureInWindow === 'function') {
+          graphRef.current.measureInWindow((wx, wy, ww) => {
+            const ox = typeof wx === 'number' ? wx : graphOriginRef.current.x;
+            const oy = typeof wy === 'number' ? wy : graphOriginRef.current.y;
+            const widthNow = typeof ww === 'number' && ww > 0 ? ww : w;
+            graphOriginRef.current = { x: ox, y: oy };
+            graphWidthRef.current = widthNow;
+            applyGrant(ox, oy, widthNow);
+          });
+        } else {
+          applyGrant(graphOriginRef.current.x, graphOriginRef.current.y, w);
         }
       },
       onPanResponderMove: (evt) => {
         if (!settingsRef.current.enabled) return;
         const w = Math.max(1, graphWidthRef.current);
-        const x = Math.max(0, Math.min(w, evt.nativeEvent.locationX));
-        const y = Math.max(0, Math.min(GRAPH_HEIGHT, evt.nativeEvent.locationY));
+        const x = Math.max(0, Math.min(w, evt.nativeEvent.pageX - graphOriginRef.current.x));
+        const y = Math.max(0, Math.min(GRAPH_HEIGHT, evt.nativeEvent.pageY - graphOriginRef.current.y));
         const nextFreq = normToFreq(x / w);
-        const nextGain = Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
+        const nextGain =
+          Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
         onUpdateBandRef.current(activeDragBandRef.current, { freq: nextFreq, gain: nextGain });
       },
     })
@@ -200,6 +233,7 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
   const handleGraphLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width;
     if (w > 0) setGraphWidth(w);
+    refreshGraphOrigin();
   };
 
   const stepFreq = (dir: -1 | 1) => {
@@ -282,19 +316,21 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
         {/* Graphical Frequency Response Plot */}
         <View style={styles.graphCard}>
           <View
+            ref={graphRef}
             style={styles.graphCanvas}
             onLayout={handleGraphLayout}
             {...panResponder.panHandlers}
           >
             {/* Horizontal Grid Lines (+6 dB, 0 dB, -6 dB) */}
-            <View style={[styles.gridLineH, { top: '25%' }]} />
-            <View style={[styles.gridLineHZero, { top: '50%' }]} />
-            <View style={[styles.gridLineH, { top: '75%' }]} />
+            <View pointerEvents="none" style={[styles.gridLineH, { top: '25%' }]} />
+            <View pointerEvents="none" style={[styles.gridLineHZero, { top: '50%' }]} />
+            <View pointerEvents="none" style={[styles.gridLineH, { top: '75%' }]} />
 
             {/* Vertical Frequency Grid Lines (100 Hz, 1 kHz, 10 kHz) */}
             {[100, 1000, 10000].map((f) => (
               <View
                 key={f}
+                pointerEvents="none"
                 style={[
                   styles.gridLineV,
                   { left: `${Math.round(freqToNorm(f) * 100)}%` },
