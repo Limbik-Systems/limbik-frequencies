@@ -214,15 +214,17 @@ export default function App() {
     [quality]
   );
 
-  const handleToggleEqEnabled = useCallback(async () => {
-    const next: EqSettings = { ...eqSettings, enabled: !eqSettings.enabled };
-    setEqSettings(next);
-    await audioEngine.setEq(next.enabled, next.bands);
-    await saveEqSettings(next);
-  }, [eqSettings]);
+  const handleToggleEqEnabled = useCallback(() => {
+    setEqSettings((prev) => {
+      const next: EqSettings = { ...prev, enabled: !prev.enabled };
+      audioEngine.setEq(next.enabled, next.bands);
+      saveEqSettings(next);
+      return next;
+    });
+  }, []);
 
   const handleSelectEqPreset = useCallback(
-    async (presetId: Exclude<EqPresetId, 'custom'>) => {
+    (presetId: Exclude<EqPresetId, 'custom'>) => {
       const next: EqSettings = {
         enabled: true,
         presetId,
@@ -234,33 +236,35 @@ export default function App() {
         ],
       };
       setEqSettings(next);
-      await audioEngine.setEq(next.enabled, next.bands);
-      await saveEqSettings(next);
+      audioEngine.setEq(next.enabled, next.bands);
+      saveEqSettings(next);
     },
     []
   );
 
   const handleUpdateEqBand = useCallback(
-    async (bandIndex: number, patch: Partial<EqBandConfig>) => {
-      const nextBands = eqSettings.bands.map((b, idx) => {
-        if (idx !== bandIndex) return b;
-        return {
-          freq: Math.max(30, Math.min(16000, patch.freq ?? b.freq)),
-          gain: Math.max(-12, Math.min(12, patch.gain ?? b.gain)),
-          q: Math.max(0.3, Math.min(8.0, patch.q ?? b.q)),
-        };
-      }) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
+    (bandIndex: number, patch: Partial<EqBandConfig>) => {
+      setEqSettings((prev) => {
+        const nextBands = prev.bands.map((b, idx) => {
+          if (idx !== bandIndex) return b;
+          return {
+            freq: Math.max(30, Math.min(16000, patch.freq ?? b.freq)),
+            gain: Math.max(-12, Math.min(12, patch.gain ?? b.gain)),
+            q: Math.max(0.3, Math.min(8.0, patch.q ?? b.q)),
+          };
+        }) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
 
-      const next: EqSettings = {
-        enabled: true,
-        presetId: 'custom',
-        bands: nextBands,
-      };
-      setEqSettings(next);
-      await audioEngine.setEq(next.enabled, next.bands);
-      await saveEqSettings(next);
+        const next: EqSettings = {
+          enabled: true,
+          presetId: 'custom',
+          bands: nextBands,
+        };
+        audioEngine.setEq(next.enabled, next.bands);
+        saveEqSettings(next);
+        return next;
+      });
     },
-    [eqSettings.bands]
+    []
   );
 
   // Sync lock-screen / CarPlay / Android Auto media session metadata

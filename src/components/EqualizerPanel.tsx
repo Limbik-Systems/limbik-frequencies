@@ -134,6 +134,8 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
   settingsRef.current = settings;
   const graphWidthRef = useRef<number>(graphWidth);
   graphWidthRef.current = graphWidth;
+  const onUpdateBandRef = useRef(onUpdateBand);
+  onUpdateBandRef.current = onUpdateBand;
 
   const curveDbValues = useMemo(() => {
     const pts: number[] = [];
@@ -178,7 +180,7 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
         if (settingsRef.current.enabled) {
           const nextFreq = normToFreq(x / w);
           const nextGain = Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
-          onUpdateBand(bestIdx, { freq: nextFreq, gain: nextGain });
+          onUpdateBandRef.current(bestIdx, { freq: nextFreq, gain: nextGain });
         }
       },
       onPanResponderMove: (evt) => {
@@ -188,7 +190,7 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
         const y = Math.max(0, Math.min(GRAPH_HEIGHT, evt.nativeEvent.locationY));
         const nextFreq = normToFreq(x / w);
         const nextGain = Math.round(Math.max(-12, Math.min(12, 12 - (y / GRAPH_HEIGHT) * 24)) * 2) / 2;
-        onUpdateBand(activeDragBandRef.current, { freq: nextFreq, gain: nextGain });
+        onUpdateBandRef.current(activeDragBandRef.current, { freq: nextFreq, gain: nextGain });
       },
     })
   ).current;
