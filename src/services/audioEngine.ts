@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS, AVPlaybackStatus } from 'expo-av';
-import { STREAM_OPTIONS, EQ_BANDS } from '../constants/station';
-import { StreamQuality } from '../types/radio';
+import { DEFAULT_EQ_BANDS, STREAM_OPTIONS } from '../constants/station';
+import { EqBandConfig, StreamQuality } from '../types/radio';
 import {
   isNativeSpectrumAvailable,
   nativePlayStream,
@@ -32,7 +32,7 @@ class RadioAudioEngine {
   private opLock = false;
   private nativeUnsub: (() => void) | null = null;
 
-  // Web Audio API real-time FFT analyzer & 5-band EQ state
+  // Web Audio API real-time FFT analyzer & 4-band parametric EQ state
   private webAudioEl: HTMLAudioElement | null = null;
   private webAudioCtx: AudioContext | null = null;
   private webAnalyser: AnalyserNode | null = null;
@@ -40,7 +40,7 @@ class RadioAudioEngine {
   private webRafId: number | null = null;
   private webSmoothed = new Array<number>(SPECTRUM_BAND_COUNT).fill(0.06);
   private eqEnabled = true;
-  private eqGains: number[] = [0, 0, 0, 0, 0];
+  private eqBands: EqBandConfig[] = DEFAULT_EQ_BANDS.map((b) => ({ ...b }));
 
   public setCallbacks(cb: AudioEngineCallbacks) {
     this.callbacks = cb;
@@ -210,20 +210,28 @@ class RadioAudioEngine {
     }
   }
 
-  public async setEq(enabled: boolean, gains: number[]): Promise<void> {
+  public async setEq(enabled: boolean, bands: EqBandConfig[]): Promise<void> {
     this.eqEnabled = enabled;
-    this.eqGains = gains.map((g) => Math.max(-12, Math.min(12, g)));
+    this.eqBands = bands.slice(0, 4).map((b) => ({
+      freq: Math.max(30, Math.min(16000, b.freq)),
+      gain: Math.max(-12, Math.min(12, b.gain)),
+      q: Math.max(0.3, Math.min(8.0, b.q)),
+    }));
 
     if (Platform.OS === 'web') {
       this.webEqFilters.forEach((filter, idx) => {
-        filter.gain.value = enabled ? this.eqGains[idx] || 0 : 0;
+        const b = this.eqBands[idx];
+        if (!b) return;
+        filter.frequency.value = b.freq;
+        filter.Q.value = b.q;
+        filter.gain.value = enabled ? b.gain : 0;
       });
       return;
     }
 
     if (isNativeSpectrumAvailable) {
       try {
-        await nativeSetEq(enabled, this.eqGains);
+        await nativeSetEq(enabled, this.eqBands);
       } catch {
         // ignore
       }
@@ -267,13 +275,13 @@ class RadioAudioEngine {
     this.webAudioCtx = ctx;
 
     const source = ctx.createMediaElementSource(audioEl);
-    const filters: BiquadFilterNode[] = EQ_BANDS.map((band, idx) => {
+    const filters: BiquadFilterNode[] = this.eqBands.map((band, idx) => {
       const filter = ctx.createBiquadFilter();
       filter.type =
-        idx === 0 ? 'lowshelf' : idx === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
+        idx === 0 ? 'lowshelf' : idx === this.eqBands.length - 1 ? 'highshelf' : 'peaking';
       filter.frequency.value = band.freq;
-      filter.Q.value = 1.0;
-      filter.gain.value = this.eqEnabled ? this.eqGains[idx] || 0 : 0;
+      filter.Q.value = band.q;
+      filter.gain.value = this.eqEnabled ? band.gain : 0;
       return filter;
     });
     this.webEqFilters = filters;

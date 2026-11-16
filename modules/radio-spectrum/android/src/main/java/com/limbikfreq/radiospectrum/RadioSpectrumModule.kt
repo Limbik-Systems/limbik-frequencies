@@ -57,10 +57,11 @@ class RadioSpectrumModule : Module() {
       // Handled by MediaSession / system notification layer
     }
 
-    AsyncFunction("setEq") { enabled: Boolean, gains: List<Double> ->
+    AsyncFunction("setEq") { enabled: Boolean, bands: List<Map<String, Any?>> ->
       eqEnabled = enabled
-      for (i in 0 until min(5, gains.size)) {
-        eqGains[i] = max(-12.0, min(12.0, gains[i]))
+      for (i in 0 until min(4, bands.size)) {
+        val g = (bands[i]["gain"] as? Number)?.toDouble() ?: 0.0
+        eqGains[i] = max(-12.0, min(12.0, g))
       }
       applyAndroidEq()
     }

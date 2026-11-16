@@ -128,8 +128,14 @@ export interface CarMediaTemplateItem {
 
 export type EqPresetId = 'flat' | 'warm_bass' | 'idm_crisp' | 'late_night' | 'club' | 'custom';
 
+export interface EqBandConfig {
+  freq: number; // Hz: 30 .. 16000
+  gain: number; // dB: -12 .. +12
+  q: number;    // Q: 0.3 .. 8.0
+}
+
 export interface EqSettings {
   enabled: boolean;
   presetId: EqPresetId;
-  gains: [number, number, number, number, number];
+  bands: [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
 }

@@ -23,11 +23,17 @@ type RadioSpectrumModuleEvents = {
   onSpectrum(event: RadioSpectrumBandsEvent): void;
 };
 
+export interface EqBandParam {
+  freq: number;
+  gain: number;
+  q: number;
+}
+
 declare class RadioSpectrumNativeModule extends NativeModule<RadioSpectrumModuleEvents> {
   play(url: string): Promise<void>;
   stop(): Promise<void>;
   setNowPlaying(meta: NowPlayingMetadata): Promise<void>;
-  setEq(enabled: boolean, gains: number[]): Promise<void>;
+  setEq(enabled: boolean, bands: EqBandParam[]): Promise<void>;
 }
 
 const NativeRadioSpectrum =
@@ -52,9 +58,9 @@ export async function nativeSetNowPlaying(meta: NowPlayingMetadata): Promise<voi
   await NativeRadioSpectrum.setNowPlaying(meta);
 }
 
-export async function nativeSetEq(enabled: boolean, gains: number[]): Promise<void> {
+export async function nativeSetEq(enabled: boolean, bands: EqBandParam[]): Promise<void> {
   if (!NativeRadioSpectrum) return;
-  await NativeRadioSpectrum.setEq(enabled, gains);
+  await NativeRadioSpectrum.setEq(enabled, bands);
 }
 
 export function subscribeNativeSpectrum(

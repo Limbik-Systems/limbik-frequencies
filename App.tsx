@@ -20,9 +20,10 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { EQ_PRESETS, STATION_CONFIG, THEME } from './src/constants/station';
+import { DEFAULT_EQ_BANDS, EQ_PRESETS, STATION_CONFIG, THEME } from './src/constants/station';
 import {
   AzuraSong,
+  EqBandConfig,
   EqPresetId,
   EqSettings,
   FavoriteTrack,
@@ -94,7 +95,7 @@ export default function App() {
   const [eqSettings, setEqSettings] = useState<EqSettings>({
     enabled: true,
     presetId: 'flat',
-    gains: [0, 0, 0, 0, 0],
+    bands: DEFAULT_EQ_BANDS,
   });
 
   // Song Requests catalog state
@@ -120,7 +121,7 @@ export default function App() {
       setFavorites(savedFavs);
       setEqSettings(savedEq);
       await audioEngine.setVolume(1.0);
-      await audioEngine.setEq(savedEq.enabled, savedEq.gains);
+      await audioEngine.setEq(savedEq.enabled, savedEq.bands);
     })();
     return () => {
       mounted = false;
@@ -216,7 +217,7 @@ export default function App() {
   const handleToggleEqEnabled = useCallback(async () => {
     const next: EqSettings = { ...eqSettings, enabled: !eqSettings.enabled };
     setEqSettings(next);
-    await audioEngine.setEq(next.enabled, next.gains);
+    await audioEngine.setEq(next.enabled, next.bands);
     await saveEqSettings(next);
   }, [eqSettings]);
 
@@ -225,41 +226,41 @@ export default function App() {
       const next: EqSettings = {
         enabled: true,
         presetId,
-        gains: [...EQ_PRESETS[presetId].gains] as [
-          number,
-          number,
-          number,
-          number,
-          number
+        bands: EQ_PRESETS[presetId].bands.map((b) => ({ ...b })) as [
+          EqBandConfig,
+          EqBandConfig,
+          EqBandConfig,
+          EqBandConfig
         ],
       };
       setEqSettings(next);
-      await audioEngine.setEq(next.enabled, next.gains);
+      await audioEngine.setEq(next.enabled, next.bands);
       await saveEqSettings(next);
     },
     []
   );
 
-  const handleChangeEqBandGain = useCallback(
-    async (bandIndex: number, nextGain: number) => {
-      const nextGains = [...eqSettings.gains] as [
-        number,
-        number,
-        number,
-        number,
-        number
-      ];
-      nextGains[bandIndex] = Math.max(-12, Math.min(12, nextGain));
+  const handleUpdateEqBand = useCallback(
+    async (bandIndex: number, patch: Partial<EqBandConfig>) => {
+      const nextBands = eqSettings.bands.map((b, idx) => {
+        if (idx !== bandIndex) return b;
+        return {
+          freq: Math.max(30, Math.min(16000, patch.freq ?? b.freq)),
+          gain: Math.max(-12, Math.min(12, patch.gain ?? b.gain)),
+          q: Math.max(0.3, Math.min(8.0, patch.q ?? b.q)),
+        };
+      }) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
+
       const next: EqSettings = {
         enabled: true,
         presetId: 'custom',
-        gains: nextGains,
+        bands: nextBands,
       };
       setEqSettings(next);
-      await audioEngine.setEq(next.enabled, next.gains);
+      await audioEngine.setEq(next.enabled, next.bands);
       await saveEqSettings(next);
     },
-    [eqSettings.gains]
+    [eqSettings.bands]
   );
 
   // Sync lock-screen / CarPlay / Android Auto media session metadata
@@ -1011,13 +1012,13 @@ export default function App() {
             </View>
           )}
 
-          {/* TAB 5: 5-BAND PARAMETRIC EQUALIZER */}
+          {/* TAB 5: 4-BAND GRAPHICAL PARAMETRIC EQUALIZER */}
           {activeTab === 'eq' && (
             <EqualizerPanel
               settings={eqSettings}
               onToggleEnabled={handleToggleEqEnabled}
               onSelectPreset={handleSelectEqPreset}
-              onChangeBandGain={handleChangeEqBandGain}
+              onUpdateBand={handleUpdateEqBand}
             />
           )}
         </View>

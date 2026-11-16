@@ -1,4 +1,4 @@
-import { EqPresetId, StreamOption, StreamQuality } from '../types/radio';
+import { EqBandConfig, EqPresetId, StreamOption, StreamQuality } from '../types/radio';
 
 export const STATION_CONFIG = {
   id: 1,
@@ -59,21 +59,68 @@ export const THEME = {
   textMuted: 'rgba(222, 226, 230, 0.68)',
 };
 
-export const EQ_BANDS = [
-  { index: 0, freq: 60, label: '60 Hz' },
-  { index: 1, freq: 230, label: '230 Hz' },
-  { index: 2, freq: 910, label: '910 Hz' },
-  { index: 3, freq: 3600, label: '3.6 kHz' },
-  { index: 4, freq: 14000, label: '14 kHz' },
-] as const;
+export const DEFAULT_EQ_BANDS: [
+  EqBandConfig,
+  EqBandConfig,
+  EqBandConfig,
+  EqBandConfig
+] = [
+  { freq: 80, gain: 0, q: 0.7 },
+  { freq: 400, gain: 0, q: 1.0 },
+  { freq: 2400, gain: 0, q: 1.0 },
+  { freq: 10000, gain: 0, q: 0.7 },
+];
 
 export const EQ_PRESETS: Record<
   Exclude<EqPresetId, 'custom'>,
-  { label: string; gains: [number, number, number, number, number] }
+  {
+    label: string;
+    bands: [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
+  }
 > = {
-  flat: { label: 'Flat', gains: [0, 0, 0, 0, 0] },
-  warm_bass: { label: 'Warm Bass', gains: [5, 3, 0, 1, 2] },
-  idm_crisp: { label: 'IDM Crisp', gains: [3, 0, 1, 4, 5] },
-  late_night: { label: 'Late Night', gains: [2, 1, -2, 1, 2] },
-  club: { label: 'Club', gains: [6, 4, -1, 3, 4] },
+  flat: {
+    label: 'Flat',
+    bands: [
+      { freq: 80, gain: 0, q: 0.7 },
+      { freq: 400, gain: 0, q: 1.0 },
+      { freq: 2400, gain: 0, q: 1.0 },
+      { freq: 10000, gain: 0, q: 0.7 },
+    ],
+  },
+  warm_bass: {
+    label: 'Warm Bass',
+    bands: [
+      { freq: 75, gain: 5, q: 0.8 },
+      { freq: 320, gain: 2.5, q: 1.1 },
+      { freq: 2200, gain: 0.5, q: 1.0 },
+      { freq: 10000, gain: 1.5, q: 0.7 },
+    ],
+  },
+  idm_crisp: {
+    label: 'IDM Crisp',
+    bands: [
+      { freq: 65, gain: 3.5, q: 0.9 },
+      { freq: 500, gain: -1.5, q: 1.4 },
+      { freq: 3200, gain: 3.5, q: 1.2 },
+      { freq: 12000, gain: 4.5, q: 0.8 },
+    ],
+  },
+  late_night: {
+    label: 'Late Night',
+    bands: [
+      { freq: 90, gain: 2, q: 0.7 },
+      { freq: 800, gain: -2, q: 1.2 },
+      { freq: 3000, gain: 1.5, q: 1.0 },
+      { freq: 9500, gain: 2, q: 0.7 },
+    ],
+  },
+  club: {
+    label: 'Club',
+    bands: [
+      { freq: 60, gain: 6, q: 0.9 },
+      { freq: 350, gain: -2, q: 1.5 },
+      { freq: 2600, gain: 3, q: 1.1 },
+      { freq: 11000, gain: 4, q: 0.8 },
+    ],
+  },
 };

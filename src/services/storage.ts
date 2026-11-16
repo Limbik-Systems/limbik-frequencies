@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AzuraSong, EqSettings, FavoriteTrack, StreamQuality } from '../types/radio';
+import { DEFAULT_EQ_BANDS } from '../constants/station';
+import { AzuraSong, EqBandConfig, EqSettings, FavoriteTrack, StreamQuality } from '../types/radio';
 
 const STORAGE_KEYS = {
   STREAM_QUALITY: '@limbikfreq/stream_quality_v1',
   FAVORITE_TRACKS: '@limbikfreq/favorite_tracks_v1',
   VOLUME: '@limbikfreq/volume_v1',
-  EQ_SETTINGS: '@limbikfreq/eq_settings_v1',
+  EQ_SETTINGS: '@limbikfreq/eq_settings_v2',
 };
 
 export async function loadPreferredQuality(): Promise<StreamQuality> {
@@ -88,7 +89,7 @@ export function songToFavorite(song: AzuraSong): FavoriteTrack {
 const DEFAULT_EQ_SETTINGS: EqSettings = {
   enabled: true,
   presetId: 'flat',
-  gains: [0, 0, 0, 0, 0],
+  bands: DEFAULT_EQ_BANDS,
 };
 
 export async function loadEqSettings(): Promise<EqSettings> {
@@ -96,13 +97,16 @@ export async function loadEqSettings(): Promise<EqSettings> {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.EQ_SETTINGS);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<EqSettings>;
-      if (Array.isArray(parsed.gains) && parsed.gains.length === 5) {
+      if (Array.isArray(parsed.bands) && parsed.bands.length === 4) {
+        const sanitized = parsed.bands.map((b, i) => ({
+          freq: Math.max(30, Math.min(16000, Number(b?.freq) || DEFAULT_EQ_BANDS[i].freq)),
+          gain: Math.max(-12, Math.min(12, Number(b?.gain) || 0)),
+          q: Math.max(0.3, Math.min(8.0, Number(b?.q) || DEFAULT_EQ_BANDS[i].q)),
+        })) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
         return {
           enabled: parsed.enabled !== false,
           presetId: parsed.presetId || 'flat',
-          gains: parsed.gains.map((g) =>
-            Math.max(-12, Math.min(12, Number(g) || 0))
-          ) as [number, number, number, number, number],
+          bands: sanitized,
         };
       }
     }

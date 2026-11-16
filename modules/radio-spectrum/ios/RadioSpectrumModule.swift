@@ -34,7 +34,12 @@ final class RadioSharedCoordinator {
   private let artworkQueue = DispatchQueue(label: "com.limbikfreq.carplay.artwork", qos: .userInteractive)
   private var isRenderingArtwork = false
   var eqEnabled: Bool = true
-  var eqGains: [Float] = [0, 0, 0, 0, 0]
+  var eqBands: [(freq: Float, gain: Float, q: Float)] = [
+    (80, 0, 0.7),
+    (400, 0, 1.0),
+    (2400, 0, 1.0),
+    (10000, 0, 0.7),
+  ]
 
   private init() {}
 
@@ -96,17 +101,27 @@ final class RadioSharedCoordinator {
       }
     )
     streamer = newStreamer
-    newStreamer.applyEq(enabled: eqEnabled, gains: eqGains)
+    newStreamer.applyEq(enabled: eqEnabled, bands: eqBands)
     newStreamer.start(urlString: urlString)
   }
 
-  func setEq(enabled: Bool, gains: [Double]) {
+  func setEq(enabled: Bool, bands: [[String: Any]]) {
     eqEnabled = enabled
-    eqGains = (0..<5).map { idx in
-      let g = idx < gains.count ? Float(gains[idx]) : 0
-      return max(-12.0, min(12.0, g))
+    var updated: [(freq: Float, gain: Float, q: Float)] = []
+    for i in 0..<4 {
+      let fallback = i < eqBands.count ? eqBands[i] : (1000, 0, 1.0)
+      if i < bands.count {
+        let item = bands[i]
+        let f = max(30.0, min(16000.0, Float((item["freq"] as? Double) ?? Double(fallback.freq))))
+        let g = max(-12.0, min(12.0, Float((item["gain"] as? Double) ?? Double(fallback.gain))))
+        let q = max(0.3, min(8.0, Float((item["q"] as? Double) ?? Double(fallback.q))))
+        updated.append((f, g, q))
+      } else {
+        updated.append(fallback)
+      }
     }
-    streamer?.applyEq(enabled: eqEnabled, gains: eqGains)
+    eqBands = updated
+    streamer?.applyEq(enabled: eqEnabled, bands: eqBands)
   }
 
   func stop() {
@@ -298,8 +313,8 @@ public class RadioSpectrumModule: Module {
       )
     }
 
-    AsyncFunction("setEq") { (enabled: Bool, gains: [Double]) in
-      RadioSharedCoordinator.shared.setEq(enabled: enabled, gains: gains)
+    AsyncFunction("setEq") { (enabled: Bool, bands: [[String: Any]]) in
+      RadioSharedCoordinator.shared.setEq(enabled: enabled, bands: bands)
     }
   }
 }
@@ -391,7 +406,7 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
 
   private let engine = AVAudioEngine()
   private let playerNode = AVAudioPlayerNode()
-  private let eqUnit = AVAudioUnitEQ(numberOfBands: 5)
+  private let eqUnit = AVAudioUnitEQ(numberOfBands: 4)
   private var converter: AVAudioConverter?
   private var sourceFormat: AVAudioFormat?
   private var targetFormat: AVAudioFormat?
@@ -417,10 +432,10 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
 
     engine.attach(playerNode)
     engine.attach(eqUnit)
-    let eqFreqs: [Float] = [60, 230, 910, 3600, 14000]
-    for i in 0..<5 {
+    let eqFreqs: [Float] = [80, 400, 2400, 10000]
+    for i in 0..<4 {
       let band = eqUnit.bands[i]
-      band.filterType = (i == 0) ? .lowShelf : (i == 4 ? .highShelf : .parametric)
+      band.filterType = (i == 0) ? .lowShelf : (i == 3 ? .highShelf : .parametric)
       band.frequency = eqFreqs[i]
       band.bandwidth = 1.0
       band.gain = 0
@@ -449,10 +464,16 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     }
   }
 
-  func applyEq(enabled: Bool, gains: [Float]) {
+  func applyEq(enabled: Bool, bands: [(freq: Float, gain: Float, q: Float)]) {
     eqUnit.bypass = !enabled
-    for i in 0..<min(5, gains.count) {
-      eqUnit.bands[i].gain = max(-12.0, min(12.0, gains[i]))
+    for i in 0..<min(4, bands.count) {
+      let b = bands[i]
+      eqUnit.bands[i].frequency = max(30.0, min(16000.0, b.freq))
+      eqUnit.bands[i].gain = max(-12.0, min(12.0, b.gain))
+      // Convert Q to octave bandwidth: BW = 2 * asinh(1 / (2 * Q)) / ln(2)
+      let clampedQ = Double(max(0.3, min(8.0, b.q)))
+      let bwOctaves = Float(2.0 * asinh(1.0 / (2.0 * clampedQ)) / log(2.0))
+      eqUnit.bands[i].bandwidth = max(0.05, min(5.0, bwOctaves))
     }
   }
 
