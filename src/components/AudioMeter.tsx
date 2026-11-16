@@ -46,10 +46,10 @@ export const AudioMeter: React.FC<AudioMeterProps> = ({
         {displayBands.map((level, idx) => {
           const clamped = Math.max(0.06, Math.min(1, level));
           const barHeight = isPlaying
-            ? Math.round(3 + clamped * 25)
+            ? Math.round(4 + clamped * 80)
             : isBuffering
-            ? 5
-            : 3;
+            ? 10
+            : 4;
 
           return (
             <View
@@ -89,10 +89,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#0E121B',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 13,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    gap: 7,
+    gap: 10,
   },
   headerRow: {
     flexDirection: 'row',
@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   barsRow: {
-    height: 28,
+    height: 84,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   bar: {
     flex: 1,
     borderRadius: 2,
-    minHeight: 3,
+    minHeight: 4,
   },
   freqScaleRow: {
     flexDirection: 'row',
