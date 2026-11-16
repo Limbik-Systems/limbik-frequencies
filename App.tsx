@@ -18,6 +18,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { STATION_CONFIG, THEME } from './src/constants/station';
 import {
@@ -35,15 +36,13 @@ import {
 import {
   loadFavoriteTracks,
   loadPreferredQuality,
-  loadSavedVolume,
   saveFavoriteTracks,
   savePreferredQuality,
-  saveVolume,
   songToFavorite,
 } from './src/services/storage';
 import { audioEngine, PlaybackStatusState } from './src/services/audioEngine';
 import { syncMediaSessionMetadata } from './src/services/carIntegration';
-import { CarModeModal } from './src/components/CarModeModal';
+import { AudioMeter } from './src/components/AudioMeter';
 
 type TabKey = 'player' | 'history' | 'favorites' | 'request';
 
@@ -68,7 +67,6 @@ function formatRelativeTime(unixSeconds: number): string {
 
 export default function App() {
   const { width: screenWidth } = useWindowDimensions();
-  // Prominent album art size: ~72% of phone width, clamped between 200px and 300px
   const heroArtSize = Math.min(300, Math.max(200, Math.floor(screenWidth * 0.68)));
 
   const [activeTab, setActiveTab] = useState<TabKey>('player');
@@ -78,10 +76,8 @@ export default function App() {
   const [playbackState, setPlaybackState] = useState<PlaybackStatusState>('stopped');
   const [streamError, setStreamError] = useState<string | null>(null);
   const [quality, setQuality] = useState<StreamQuality>('320');
-  const [volume, setVolume] = useState<number>(1.0);
   const [favorites, setFavorites] = useState<FavoriteTrack[]>([]);
   const [favoritesFilter, setFavoritesFilter] = useState<string>('');
-  const [carModeVisible, setCarModeVisible] = useState<boolean>(false);
   const [localElapsed, setLocalElapsed] = useState<number>(0);
 
   // Song Requests catalog state
@@ -97,16 +93,14 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [savedQ, savedFavs, savedVol] = await Promise.all([
+      const [savedQ, savedFavs] = await Promise.all([
         loadPreferredQuality(),
         loadFavoriteTracks(),
-        loadSavedVolume(),
       ]);
       if (!mounted) return;
       setQuality(savedQ);
       setFavorites(savedFavs);
-      setVolume(savedVol);
-      await audioEngine.setVolume(savedVol);
+      await audioEngine.setVolume(1.0);
     })();
     return () => {
       mounted = false;
@@ -195,13 +189,6 @@ export default function App() {
     },
     [quality]
   );
-
-  const handleVolumeChange = useCallback(async (newVol: number) => {
-    const rounded = Math.round(newVol * 100) / 100;
-    setVolume(rounded);
-    await audioEngine.setVolume(rounded);
-    await saveVolume(rounded);
-  }, []);
 
   // Sync lock-screen / CarPlay / Android Auto media session metadata
   useEffect(() => {
@@ -328,7 +315,7 @@ export default function App() {
     <View style={styles.rootContainer}>
       <StatusBar style="light" />
       <SafeAreaView style={styles.safeArea}>
-        {/* Top Station Header Bar */}
+        {/* Top Station Header Bar (Clean, no Car button) */}
         <View style={styles.topBar}>
           <View style={styles.brandRow}>
             <Image source={fallbackLogoAsset} style={styles.stationLogo} />
@@ -358,15 +345,6 @@ export default function App() {
               </View>
             </View>
           </View>
-
-          <TouchableOpacity
-            style={styles.carModeBtn}
-            onPress={() => setCarModeVisible(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.carModeBtnIcon}>🚗</Text>
-            <Text style={styles.carModeBtnText}>CAR</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Main Tab Content Area */}
@@ -502,7 +480,7 @@ export default function App() {
                   </View>
                 ) : null}
 
-                {/* Primary Transport Controls: Favorite — Big Play/Stop — Share */}
+                {/* Primary Transport Controls: Save — Play/Stop — Share (Flat Monochromatic Icons) */}
                 <View style={styles.transportRow}>
                   <TouchableOpacity
                     style={[
@@ -512,15 +490,17 @@ export default function App() {
                     onPress={() => toggleFavoriteSong(currentSong)}
                     activeOpacity={0.8}
                   >
+                    <Ionicons
+                      name={currentFavorited ? 'heart' : 'heart-outline'}
+                      size={20}
+                      color={currentFavorited ? THEME.primaryLight : THEME.textSecondary}
+                    />
                     <Text
                       style={[
-                        styles.sideActionIcon,
-                        currentFavorited && { color: THEME.favoritePink },
+                        styles.sideActionLabel,
+                        currentFavorited && { color: THEME.primaryLight },
                       ]}
                     >
-                      {currentFavorited ? '♥' : '♡'}
-                    </Text>
-                    <Text style={styles.sideActionLabel}>
                       {currentFavorited ? 'Saved' : 'Save'}
                     </Text>
                   </TouchableOpacity>
@@ -534,16 +514,17 @@ export default function App() {
                     activeOpacity={0.85}
                   >
                     {isBuffering ? (
-                      <ActivityIndicator color="#FFFFFF" size="small" />
+                      <ActivityIndicator
+                        color={isPlaying ? '#FFFFFF' : '#0B0E14'}
+                        size="small"
+                      />
                     ) : (
-                      <Text
-                        style={[
-                          styles.playButtonIcon,
-                          isPlaying && { color: '#FFFFFF' },
-                        ]}
-                      >
-                        {isPlaying ? '⏹' : '▶'}
-                      </Text>
+                      <Ionicons
+                        name={isPlaying ? 'stop' : 'play'}
+                        size={28}
+                        color={isPlaying ? '#FFFFFF' : '#0B0E14'}
+                        style={!isPlaying ? { marginLeft: 3 } : undefined}
+                      />
                     )}
                   </TouchableOpacity>
 
@@ -557,7 +538,11 @@ export default function App() {
                     }
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.sideActionIcon}>↗</Text>
+                    <Ionicons
+                      name="share-outline"
+                      size={20}
+                      color={THEME.textSecondary}
+                    />
                     <Text style={styles.sideActionLabel}>Share</Text>
                   </TouchableOpacity>
                 </View>
@@ -590,34 +575,11 @@ export default function App() {
                   })}
                 </View>
 
-                {/* Volume Control Bar */}
-                <View style={styles.volumeRow}>
-                  <TouchableOpacity
-                    onPress={() => handleVolumeChange(volume > 0 ? 0 : 1)}
-                  >
-                    <Text style={styles.volumeIcon}>
-                      {volume === 0 ? '🔇' : volume < 0.5 ? '🔉' : '🔊'}
-                    </Text>
-                  </TouchableOpacity>
-                  <View style={styles.volumeStepsRow}>
-                    {[0.2, 0.4, 0.6, 0.8, 1.0].map((step) => {
-                      const active = volume >= step - 0.05;
-                      return (
-                        <TouchableOpacity
-                          key={step}
-                          style={[
-                            styles.volumeStepBar,
-                            active && styles.volumeStepBarActive,
-                          ]}
-                          onPress={() => handleVolumeChange(step)}
-                        />
-                      );
-                    })}
-                  </View>
-                  <Text style={styles.volumePercent}>
-                    {Math.round(volume * 100)}%
-                  </Text>
-                </View>
+                {/* Active Audio Signal Meter (Replaces Volume Bar) */}
+                <AudioMeter
+                  playbackState={playbackState}
+                  bitrateLabel={`${quality} kbps MP3`}
+                />
               </View>
 
               {/* Playing Next Preview Card */}
@@ -626,17 +588,27 @@ export default function App() {
                   <View style={styles.upNextHeader}>
                     <Text style={styles.upNextLabel}>UP NEXT ON LIMBIK</Text>
                     <TouchableOpacity
+                      style={styles.upNextFavBtn}
                       onPress={() => toggleFavoriteSong(nextSong)}
                     >
+                      <Ionicons
+                        name={isSongFavorited(nextSong) ? 'heart' : 'heart-outline'}
+                        size={14}
+                        color={
+                          isSongFavorited(nextSong)
+                            ? THEME.primaryLight
+                            : THEME.textMuted
+                        }
+                      />
                       <Text
                         style={[
                           styles.upNextFavIcon,
                           isSongFavorited(nextSong) && {
-                            color: THEME.favoritePink,
+                            color: THEME.primaryLight,
                           },
                         ]}
                       >
-                        {isSongFavorited(nextSong) ? '♥ Saved' : '♡ Save'}
+                        {isSongFavorited(nextSong) ? 'Saved' : 'Save'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -680,7 +652,8 @@ export default function App() {
                   style={styles.refreshBtn}
                   onPress={() => refreshMetadata(true)}
                 >
-                  <Text style={styles.refreshBtnText}>↻ Refresh</Text>
+                  <Ionicons name="refresh" size={14} color={THEME.primaryLight} />
+                  <Text style={styles.refreshBtnText}>Refresh</Text>
                 </TouchableOpacity>
               </View>
 
@@ -727,14 +700,11 @@ export default function App() {
                         ]}
                         onPress={() => toggleFavoriteSong(item.song)}
                       >
-                        <Text
-                          style={[
-                            styles.rowFavBtnText,
-                            saved && { color: THEME.favoritePink },
-                          ]}
-                        >
-                          {saved ? '♥' : '♡'}
-                        </Text>
+                        <Ionicons
+                          name={saved ? 'heart' : 'heart-outline'}
+                          size={18}
+                          color={saved ? THEME.primaryLight : THEME.textSecondary}
+                        />
                       </TouchableOpacity>
                     </View>
                   );
@@ -774,7 +744,12 @@ export default function App() {
                       }).catch(() => {});
                     }}
                   >
-                    <Text style={styles.refreshBtnText}>Export ↗</Text>
+                    <Ionicons
+                      name="share-outline"
+                      size={14}
+                      color={THEME.primaryLight}
+                    />
+                    <Text style={styles.refreshBtnText}>Export</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -820,15 +795,21 @@ export default function App() {
                       style={styles.rowShareBtn}
                       onPress={() => handleShareTrack(item.artist, item.title)}
                     >
-                      <Text style={styles.rowShareText}>↗</Text>
+                      <Ionicons
+                        name="share-outline"
+                        size={16}
+                        color={THEME.textSecondary}
+                      />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.rowFavBtn, styles.rowFavBtnActive]}
+                      style={styles.rowFavBtn}
                       onPress={() => removeFavoriteById(item.id)}
                     >
-                      <Text style={{ color: THEME.favoritePink, fontSize: 15 }}>
-                        ✕
-                      </Text>
+                      <Ionicons
+                        name="close"
+                        size={17}
+                        color={THEME.textSecondary}
+                      />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -836,7 +817,7 @@ export default function App() {
                   <View style={styles.emptyBox}>
                     <Text style={styles.emptyTitle}>No saved tracks yet</Text>
                     <Text style={styles.emptySub}>
-                      Tap the heart (♡) on the Now Playing screen or in Song History to bookmark tracks you love.
+                      Tap Save on the Now Playing screen or in Song History to bookmark tracks you love.
                     </Text>
                   </View>
                 }
@@ -872,7 +853,7 @@ export default function App() {
                   style={styles.searchSubmitBtn}
                   onPress={() => loadRequestsCatalog(requestQuery)}
                 >
-                  <Text style={styles.searchSubmitText}>Search</Text>
+                  <Ionicons name="search" size={16} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
@@ -978,26 +959,54 @@ export default function App() {
               style={styles.miniPlayBtn}
               onPress={handleTogglePlay}
             >
-              <Text style={styles.miniPlayText}>
-                {isBuffering ? '⏳' : isPlaying ? '⏹' : '▶'}
-              </Text>
+              {isBuffering ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Ionicons
+                  name={isPlaying ? 'stop' : 'play'}
+                  size={18}
+                  color="#FFFFFF"
+                  style={!isPlaying ? { marginLeft: 2 } : undefined}
+                />
+              )}
             </TouchableOpacity>
           </TouchableOpacity>
         )}
 
-        {/* Bottom Navigation Bar */}
+        {/* Bottom Navigation Bar (Flat Monochromatic Vector Icons) */}
         <View style={styles.bottomNav}>
           {(
             [
-              { key: 'player', icon: '📻', label: 'Live' },
-              { key: 'history', icon: '🕒', label: 'History' },
+              {
+                key: 'player',
+                icon: 'radio-outline',
+                activeIcon: 'radio',
+                label: 'Live',
+              },
+              {
+                key: 'history',
+                icon: 'time-outline',
+                activeIcon: 'time',
+                label: 'History',
+              },
               {
                 key: 'favorites',
-                icon: '♥',
+                icon: 'heart-outline',
+                activeIcon: 'heart',
                 label: favorites.length ? `Saved (${favorites.length})` : 'Saved',
               },
-              { key: 'request', icon: '🎵', label: 'Request' },
-            ] as Array<{ key: TabKey; icon: string; label: string }>
+              {
+                key: 'request',
+                icon: 'musical-notes-outline',
+                activeIcon: 'musical-notes',
+                label: 'Request',
+              },
+            ] as Array<{
+              key: TabKey;
+              icon: keyof typeof Ionicons.glyphMap;
+              activeIcon: keyof typeof Ionicons.glyphMap;
+              label: string;
+            }>
           ).map((tab) => {
             const active = activeTab === tab.key;
             return (
@@ -1007,16 +1016,11 @@ export default function App() {
                 onPress={() => setActiveTab(tab.key)}
                 activeOpacity={0.8}
               >
-                <Text
-                  style={[
-                    styles.navIcon,
-                    tab.key === 'favorites' && {
-                      color: active ? THEME.favoritePink : THEME.textSecondary,
-                    },
-                  ]}
-                >
-                  {tab.icon}
-                </Text>
+                <Ionicons
+                  name={active ? tab.activeIcon : tab.icon}
+                  size={20}
+                  color={active ? THEME.primaryLight : THEME.textMuted}
+                />
                 <Text
                   style={[
                     styles.navLabel,
@@ -1030,20 +1034,6 @@ export default function App() {
             );
           })}
         </View>
-
-        {/* Full-screen CarPlay / Android Auto Driving Dashboard Modal */}
-        <CarModeModal
-          visible={carModeVisible}
-          onClose={() => setCarModeVisible(false)}
-          nowPlaying={nowPlaying}
-          playbackState={playbackState}
-          quality={quality}
-          isCurrentFavorite={currentFavorited}
-          favorites={favorites}
-          onTogglePlay={handleTogglePlay}
-          onSelectQuality={handleSelectQuality}
-          onToggleCurrentFavorite={() => toggleFavoriteSong(currentSong)}
-        />
       </SafeAreaView>
     </View>
   );
@@ -1067,7 +1057,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#111520',
     borderBottomWidth: 1,
     borderBottomColor: THEME.border,
-    gap: 10,
   },
   brandRow: {
     flex: 1,
@@ -1108,26 +1097,6 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     fontSize: 11,
   },
-  carModeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#1C2230',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: THEME.primary,
-  },
-  carModeBtnIcon: {
-    fontSize: 13,
-  },
-  carModeBtnText: {
-    color: THEME.primaryLight,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
   contentArea: {
     flex: 1,
   },
@@ -1143,7 +1112,7 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
-    gap: 16,
+    gap: 15,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -1181,7 +1150,7 @@ const styles = StyleSheet.create({
   heroArtworkContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 4,
+    marginVertical: 2,
   },
   artworkShadowBox: {
     borderRadius: 16,
@@ -1292,9 +1261,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   playButton: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1306,11 +1275,6 @@ const styles = StyleSheet.create({
   },
   playButtonActive: {
     backgroundColor: THEME.primary,
-  },
-  playButtonIcon: {
-    color: '#0B0E14',
-    fontSize: 26,
-    fontWeight: '900',
   },
   sideActionButton: {
     minWidth: 68,
@@ -1324,19 +1288,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
   },
   sideActionButtonFavorited: {
-    borderColor: THEME.favoritePink,
-    backgroundColor: 'rgba(255, 64, 129, 0.15)',
-  },
-  sideActionIcon: {
-    color: THEME.textPrimary,
-    fontSize: 18,
-    fontWeight: '700',
+    borderColor: THEME.primary,
+    backgroundColor: 'rgba(33, 150, 243, 0.14)',
   },
   sideActionLabel: {
     color: THEME.textMuted,
     fontSize: 10,
     fontWeight: '600',
-    marginTop: 2,
+    marginTop: 3,
   },
   qualitySegment: {
     width: '100%',
@@ -1369,36 +1328,6 @@ const styles = StyleSheet.create({
   qualityTabTextSelected: {
     color: '#FFFFFF',
   },
-  volumeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  volumeIcon: {
-    fontSize: 16,
-  },
-  volumeStepsRow: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: 6,
-    height: 16,
-    alignItems: 'center',
-  },
-  volumeStepBar: {
-    flex: 1,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#262D3D',
-  },
-  volumeStepBarActive: {
-    backgroundColor: THEME.primaryLight,
-  },
-  volumePercent: {
-    color: THEME.textMuted,
-    fontSize: 11,
-    width: 34,
-    textAlign: 'right',
-  },
   upNextCard: {
     backgroundColor: '#151A26',
     borderRadius: 16,
@@ -1417,6 +1346,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.7,
+  },
+  upNextFavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   upNextFavIcon: {
     color: THEME.textMuted,
@@ -1475,6 +1409,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: '#1C2230',
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -1509,12 +1446,8 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.primary,
     paddingHorizontal: 14,
     justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 8,
-  },
-  searchSubmitText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 13,
   },
   statusToast: {
     marginHorizontal: 16,
@@ -1582,10 +1515,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowShareText: {
-    color: THEME.textSecondary,
-    fontSize: 15,
-  },
   rowFavBtn: {
     width: 36,
     height: 36,
@@ -1595,11 +1524,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   rowFavBtnActive: {
-    backgroundColor: 'rgba(255, 64, 129, 0.14)',
-  },
-  rowFavBtnText: {
-    color: THEME.textSecondary,
-    fontSize: 16,
+    backgroundColor: 'rgba(33, 150, 243, 0.14)',
   },
   requestActionBtn: {
     backgroundColor: THEME.primary,
@@ -1667,11 +1592,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  miniPlayText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '800',
-  },
   bottomNav: {
     flexDirection: 'row',
     backgroundColor: '#111520',
@@ -1684,15 +1604,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 4,
-    gap: 2,
+    gap: 3,
   },
   navTabActive: {
     borderTopWidth: 2,
     borderTopColor: THEME.primary,
-  },
-  navIcon: {
-    fontSize: 16,
-    color: THEME.textSecondary,
   },
   navLabel: {
     color: THEME.textMuted,
