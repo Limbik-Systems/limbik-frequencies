@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
  * unit IDs (and update iosAppId / androidAppId in app.json) before App Store release.
  */
 export const ADMOB_CONFIG = {
-  IOS_BANNER_UNIT_ID: 'ca-app-pub-3940256099942544/2934735716',
+  IOS_BANNER_UNIT_ID: 'ca-app-pub-7759892583400316/6579088775',
   ANDROID_BANNER_UNIT_ID: 'ca-app-pub-3940256099942544/6300978111',
 };
 
