@@ -53,6 +53,7 @@ import {
 import { syncMediaSessionMetadata } from './src/services/carIntegration';
 import { AudioMeter } from './src/components/AudioMeter';
 import { EqualizerPanel } from './src/components/EqualizerPanel';
+import { AdBanner } from './src/components/AdBanner';
 
 type TabKey = 'player' | 'history' | 'favorites' | 'request' | 'eq';
 
@@ -1067,6 +1068,9 @@ export default function App() {
             </TouchableOpacity>
           </TouchableOpacity>
         )}
+
+        {/* Unobtrusive Google AdMob Adaptive Banner docked above Bottom Navigation */}
+        <AdBanner />
 
         {/* Bottom Navigation Bar (Flat Monochromatic Vector Icons) */}
         <View style={styles.bottomNav}>
