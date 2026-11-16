@@ -3,136 +3,335 @@ import AVFoundation
 import AudioToolbox
 import Accelerate
 import MediaPlayer
+import CarPlay
+import UIKit
 
 private let kBandCount = 52
 private let kFftSize = 2048
+private let kStream320Url = "https://limbikfreq.com/listen/limbik_frequencies/320.mp3"
+private let kStream128Url = "https://limbikfreq.com/listen/limbik_frequencies/128.mp3"
 
-public class RadioSpectrumModule: Module {
-  private var streamer: IcecastAudioStreamer?
-  private var remoteConfigured = false
-  private var currentUrl: String?
-  private var cachedMeta: [String: Any] = [:]
+/// Shared playback & spectrum state so both the React Native bridge and CarPlaySceneDelegate
+/// stay synchronized on the same live Icecast audio stream and 52-band FFT data.
+final class RadioSharedCoordinator {
+  static let shared = RadioSharedCoordinator()
 
-  public func definition() -> ModuleDefinition {
-    Name("RadioSpectrum")
+  var streamer: IcecastAudioStreamer?
+  var currentUrl: String = kStream320Url
+  var currentTitle: String = "Limbik Frequencies"
+  var currentArtist: String = "Radio Elektro[u]nique"
+  var currentAlbum: String = "Limbik Frequencies"
+  var baseArtworkImage: UIImage?
+  var isCarPlayConnected: Bool = false
+  var remoteConfigured: Bool = false
 
-    Events("onStateChange", "onSpectrum")
+  var onStateEmit: ((String, String?) -> Void)?
+  var onSpectrumEmit: (([Double]) -> Void)?
 
-    OnDestroy {
-      self.streamer?.stop()
-      self.streamer = nil
-    }
+  private var lastArtworkRenderTime: CFAbsoluteTime = 0
+  private var latestBands: [Double] = Array(repeating: 0.06, count: kBandCount)
 
-    AsyncFunction("play") { (url: String) in
-      self.currentUrl = url
-      self.configureAudioSession()
-      self.configureRemoteCommands()
+  private init() {}
 
-      self.streamer?.stop()
-      let newStreamer = IcecastAudioStreamer(
-        onState: { [weak self] state, error in
-          var payload: [String: Any] = ["state": state]
-          if let error = error {
-            payload["error"] = error
-          }
-          self?.sendEvent("onStateChange", payload)
-        },
-        onSpectrum: { [weak self] bands in
-          self?.sendEvent("onSpectrum", ["bands": bands])
-        }
-      )
-      self.streamer = newStreamer
-      newStreamer.start(urlString: url)
-    }
-
-    AsyncFunction("stop") {
-      self.streamer?.stop()
-      self.streamer = nil
-      self.sendEvent("onStateChange", ["state": "stopped"])
-      self.sendEvent("onSpectrum", ["bands": Array(repeating: 0.0, count: kBandCount)])
-    }
-
-    AsyncFunction("setNowPlaying") { (meta: [String: Any]) in
-      self.cachedMeta = meta
-      DispatchQueue.main.async {
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = meta["title"] as? String ?? "Limbik Frequencies"
-        info[MPMediaItemPropertyArtist] = meta["artist"] as? String ?? "Radio Elektro[u]nique"
-        info[MPMediaItemPropertyAlbumTitle] = meta["album"] as? String ?? "Limbik Frequencies"
-        info[MPNowPlayingInfoPropertyIsLiveStream] = true
-        info[MPNowPlayingInfoPropertyPlaybackRate] = self.streamer?.isPlaying == true ? 1.0 : 0.0
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-
-        if let artStr = meta["artworkUrl"] as? String, let artUrl = URL(string: artStr) {
-          URLSession.shared.dataTask(with: artUrl) { data, _, _ in
-            guard let data = data, let image = UIImage(data: data) else { return }
-            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-            DispatchQueue.main.async {
-              var updated = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-              updated[MPMediaItemPropertyArtwork] = artwork
-              MPNowPlayingInfoCenter.default().nowPlayingInfo = updated
-            }
-          }.resume()
-        }
-      }
-    }
-  }
-
-  private func configureAudioSession() {
+  func configureAudioSession() {
     do {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.playback, mode: .default, options: [])
       try session.setActive(true)
     } catch {
-      // Ignore if session already configured
+      // Ignore if already active
     }
   }
 
-  private func configureRemoteCommands() {
+  func configureRemoteCommands() {
     guard !remoteConfigured else { return }
     remoteConfigured = true
     let center = MPRemoteCommandCenter.shared()
 
     center.playCommand.isEnabled = true
     center.playCommand.addTarget { [weak self] _ in
-      guard let self = self, let url = self.currentUrl else { return .commandFailed }
-      self.configureAudioSession()
-      if self.streamer == nil {
-        let s = IcecastAudioStreamer(
-          onState: { [weak self] state, error in
-            var payload: [String: Any] = ["state": state]
-            if let error = error { payload["error"] = error }
-            self?.sendEvent("onStateChange", payload)
-          },
-          onSpectrum: { [weak self] bands in
-            self?.sendEvent("onSpectrum", ["bands": bands])
-          }
-        )
-        self.streamer = s
-        s.start(urlString: url)
-      }
+      guard let self = self else { return .commandFailed }
+      self.play(urlString: self.currentUrl)
       return .success
     }
 
     center.pauseCommand.isEnabled = true
     center.pauseCommand.addTarget { [weak self] _ in
-      self?.streamer?.stop()
-      self?.streamer = nil
-      self?.sendEvent("onStateChange", ["state": "stopped"])
+      self?.stop()
       return .success
     }
 
     center.stopCommand.isEnabled = true
     center.stopCommand.addTarget { [weak self] _ in
-      self?.streamer?.stop()
-      self?.streamer = nil
-      self?.sendEvent("onStateChange", ["state": "stopped"])
+      self?.stop()
       return .success
+    }
+  }
+
+  func play(urlString: String) {
+    currentUrl = urlString
+    configureAudioSession()
+    configureRemoteCommands()
+
+    streamer?.stop()
+    let newStreamer = IcecastAudioStreamer(
+      onState: { [weak self] state, error in
+        self?.onStateEmit?(state, error)
+        if state == "playing" {
+          self?.pushNowPlayingInfo(includeAnalyzer: true)
+        } else if state == "stopped" {
+          self?.pushNowPlayingInfo(includeAnalyzer: false)
+        }
+      },
+      onSpectrum: { [weak self] bands in
+        guard let self = self else { return }
+        self.latestBands = bands
+        self.onSpectrumEmit?(bands)
+        self.maybeUpdateCarPlayAnalyzerArtwork(bands: bands)
+      }
+    )
+    streamer = newStreamer
+    newStreamer.start(urlString: urlString)
+  }
+
+  func stop() {
+    streamer?.stop()
+    streamer = nil
+    latestBands = Array(repeating: 0.06, count: kBandCount)
+    onStateEmit?("stopped", nil)
+    onSpectrumEmit?(latestBands)
+    pushNowPlayingInfo(includeAnalyzer: false)
+  }
+
+  func updateMetadata(title: String, artist: String, album: String, artworkUrl: String) {
+    currentTitle = title
+    currentArtist = artist
+    currentAlbum = album
+    pushNowPlayingInfo(includeAnalyzer: streamer?.isPlaying == true)
+
+    if let url = URL(string: artworkUrl) {
+      URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        guard let self = self, let data = data, let img = UIImage(data: data) else { return }
+        self.baseArtworkImage = img
+        self.pushNowPlayingInfo(includeAnalyzer: self.streamer?.isPlaying == true)
+      }.resume()
+    }
+  }
+
+  private func pushNowPlayingInfo(includeAnalyzer: Bool) {
+    let rendered = renderCarPlayArtwork(
+      base: baseArtworkImage,
+      bands: latestBands,
+      active: includeAnalyzer
+    )
+    DispatchQueue.main.async {
+      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+      info[MPMediaItemPropertyTitle] = self.currentTitle
+      info[MPMediaItemPropertyArtist] = self.currentArtist
+      info[MPMediaItemPropertyAlbumTitle] = self.currentAlbum
+      info[MPNowPlayingInfoPropertyIsLiveStream] = true
+      info[MPNowPlayingInfoPropertyPlaybackRate] = self.streamer?.isPlaying == true ? 1.0 : 0.0
+      if let img = rendered {
+        info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+      }
+      MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+  }
+
+  private func maybeUpdateCarPlayAnalyzerArtwork(bands: [Double]) {
+    // Update CarPlay / Lock Screen artwork with live 52-band analyzer at ~4 fps when CarPlay is attached
+    let interval: CFAbsoluteTime = isCarPlayConnected ? 0.25 : 1.0
+    let now = CFAbsoluteTimeGetCurrent()
+    guard now - lastArtworkRenderTime >= interval else { return }
+    lastArtworkRenderTime = now
+    pushNowPlayingInfo(includeAnalyzer: true)
+  }
+
+  /// Renders a 600x600 artwork image with a prominent 52-band spectrum analyzer overlay
+  /// at the bottom for Apple CarPlay's CPNowPlayingTemplate and Lock Screen.
+  private func renderCarPlayArtwork(base: UIImage?, bands: [Double], active: Bool) -> UIImage? {
+    let size = CGSize(width: 600, height: 600)
+    let renderer = UIGraphicsImageRenderer(size: size)
+    return renderer.image { ctx in
+      let cg = ctx.cgContext
+
+      // 1. Background / Album Artwork
+      UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 1.0).setFill()
+      cg.fill(CGRect(origin: .zero, size: size))
+
+      if let baseImg = base {
+        baseImg.draw(in: CGRect(x: 0, y: 0, width: 600, height: 600))
+      }
+
+      // 2. Prominent Dark Analyzer Panel along bottom 36% of CarPlay Artwork
+      let panelHeight: CGFloat = 216
+      let panelY: CGFloat = size.height - panelHeight
+      let gradColors = [
+        UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 0.15).cgColor,
+        UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 0.92).cgColor,
+        UIColor(red: 0.055, green: 0.071, blue: 0.106, alpha: 0.98).cgColor,
+      ] as CFArray
+      if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: gradColors, locations: [0.0, 0.25, 1.0]) {
+        cg.drawLinearGradient(
+          gradient,
+          start: CGPoint(x: 0, y: panelY - 40),
+          end: CGPoint(x: 0, y: size.height),
+          options: []
+        )
+      }
+
+      // 3. Draw 52-Band Real-Time FFT Spectrum Bars
+      let padX: CGFloat = 24
+      let barAreaWidth = size.width - padX * 2
+      let spacing: CGFloat = 2.5
+      let barWidth = (barAreaWidth - spacing * CGFloat(kBandCount - 1)) / CGFloat(kBandCount)
+      let maxBarHeight: CGFloat = 152
+      let baseY: CGFloat = size.height - 26
+
+      for i in 0..<kBandCount {
+        let level = active ? CGFloat(max(0.06, min(1.0, bands[i]))) : 0.06
+        let h = max(6.0, level * maxBarHeight)
+        let x = padX + CGFloat(i) * (barWidth + spacing)
+        let rect = CGRect(x: x, y: baseY - h, width: barWidth, height: h)
+
+        let barColor: UIColor
+        if !active {
+          barColor = UIColor(red: 0.15, green: 0.18, blue: 0.24, alpha: 1.0)
+        } else if level > 0.72 {
+          barColor = UIColor.white
+        } else if Double(i) > Double(kBandCount) * 0.75 {
+          barColor = UIColor(red: 0.471, green: 0.722, blue: 0.937, alpha: 1.0)
+        } else {
+          barColor = UIColor(red: 0.129, green: 0.588, blue: 0.953, alpha: 1.0)
+        }
+
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 2.0)
+        barColor.setFill()
+        path.fill()
+      }
     }
   }
 }
 
-private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
+public class RadioSpectrumModule: Module {
+  public func definition() -> ModuleDefinition {
+    Name("RadioSpectrum")
+
+    Events("onStateChange", "onSpectrum")
+
+    OnCreate {
+      let coord = RadioSharedCoordinator.shared
+      coord.onStateEmit = { [weak self] state, error in
+        var payload: [String: Any] = ["state": state]
+        if let error = error { payload["error"] = error }
+        self?.sendEvent("onStateChange", payload)
+      }
+      coord.onSpectrumEmit = { [weak self] bands in
+        self?.sendEvent("onSpectrum", ["bands": bands])
+      }
+    }
+
+    OnDestroy {
+      RadioSharedCoordinator.shared.stop()
+    }
+
+    AsyncFunction("play") { (url: String) in
+      RadioSharedCoordinator.shared.play(urlString: url)
+    }
+
+    AsyncFunction("stop") {
+      RadioSharedCoordinator.shared.stop()
+    }
+
+    AsyncFunction("setNowPlaying") { (meta: [String: Any]) in
+      RadioSharedCoordinator.shared.updateMetadata(
+        title: meta["title"] as? String ?? "Limbik Frequencies",
+        artist: meta["artist"] as? String ?? "Radio Elektro[u]nique",
+        album: meta["album"] as? String ?? "Limbik Frequencies",
+        artworkUrl: meta["artworkUrl"] as? String ?? ""
+      )
+    }
+  }
+}
+
+// MARK: - Phone Window Scene Delegate (Preserves Expo AppDelegate Root Window when Scene Manifest is enabled)
+@objc(PhoneSceneDelegate)
+class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene else { return }
+    if let appDelegate = UIApplication.shared.delegate,
+       let existingWindow = appDelegate.window ?? nil {
+      existingWindow.windowScene = windowScene
+      self.window = existingWindow
+      existingWindow.makeKeyAndVisible()
+    }
+  }
+}
+
+// MARK: - Apple CarPlay Scene Delegate
+@objc(CarPlaySceneDelegate)
+class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
+  private var interfaceController: CPInterfaceController?
+
+  func templateApplicationScene(
+    _ templateApplicationScene: CPTemplateApplicationScene,
+    didConnect interfaceController: CPInterfaceController
+  ) {
+    self.interfaceController = interfaceController
+    RadioSharedCoordinator.shared.isCarPlayConnected = true
+
+    let nowPlayingItem = CPListItem(
+      text: "Now Playing",
+      detailText: "\(RadioSharedCoordinator.shared.currentTitle) — \(RadioSharedCoordinator.shared.currentArtist)"
+    )
+    nowPlayingItem.handler = { [weak self] _, completion in
+      self?.interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+      completion()
+    }
+
+    let hqItem = CPListItem(
+      text: "Limbik Frequencies • 320 kbps MP3",
+      detailText: "Audiophile HQ Live Stream"
+    )
+    hqItem.handler = { [weak self] _, completion in
+      RadioSharedCoordinator.shared.play(urlString: "\(kStream320Url)?_t=\(Int(Date().timeIntervalSince1970))")
+      self?.interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+      completion()
+    }
+
+    let stdItem = CPListItem(
+      text: "Limbik Frequencies • 128 kbps MP3",
+      detailText: "Standard Mobile Stream"
+    )
+    stdItem.handler = { [weak self] _, completion in
+      RadioSharedCoordinator.shared.play(urlString: "\(kStream128Url)?_t=\(Int(Date().timeIntervalSince1970))")
+      self?.interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+      completion()
+    }
+
+    let section = CPListSection(items: [nowPlayingItem, hqItem, stdItem])
+    let listTemplate = CPListTemplate(title: "Limbik Frequencies", sections: [section])
+
+    interfaceController.setRootTemplate(listTemplate, animated: false, completion: nil)
+  }
+
+  func templateApplicationScene(
+    _ templateApplicationScene: CPTemplateApplicationScene,
+    didDisconnectInterfaceController interfaceController: CPInterfaceController
+  ) {
+    RadioSharedCoordinator.shared.isCarPlayConnected = false
+    self.interfaceController = nil
+  }
+}
+
+// MARK: - Live Icecast MP3 Streamer + Accelerate vDSP 52-Band FFT
+final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
   private let onState: (String, String?) -> Void
   private let onSpectrum: ([Double]) -> Void
 
@@ -256,7 +455,6 @@ private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     }
   }
 
-  // MARK: - URLSessionDataDelegate
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     guard !stopped else { return }
     queue.async { [weak self] in
@@ -276,7 +474,6 @@ private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     }
   }
 
-  // MARK: - AudioFileStream Callbacks
   private func handlePropertyChange(fileStream: AudioFileStreamID, propertyID: AudioFileStreamPropertyID) {
     if propertyID == kAudioFileStreamProperty_DataFormat {
       var asbd = AudioStreamBasicDescription()
@@ -341,7 +538,6 @@ private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     }
   }
 
-  // MARK: - Real-Time Accelerate vDSP FFT
   private func processTapBuffer(_ buffer: AVAudioPCMBuffer) {
     guard !stopped, isPlaying, let fftSetup = fftSetup else { return }
     let now = CFAbsoluteTimeGetCurrent()
@@ -373,7 +569,6 @@ private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
         var magnitudes = [Float](repeating: 0, count: halfN)
         vDSP_zvmags(&split, 1, &magnitudes, 1, vDSP_Length(halfN))
 
-        // Map 512 FFT bins onto 26 logarithmic frequency bands (40 Hz -> 16 kHz)
         let sampleRate = Float(buffer.format.sampleRate > 0 ? buffer.format.sampleRate : 44100)
         let minFreq: Float = 45.0
         let maxFreq: Float = min(16000.0, sampleRate * 0.45)
@@ -392,7 +587,6 @@ private final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
 
           let rms = sqrt(peak) / Float(halfN)
           let db = 20.0 * log10(max(rms, 1e-6))
-          // Normalize -65 dB .. -8 dB into 0.08 .. 1.0
           let norm = Double(max(0.06, min(1.0, (db + 65.0) / 57.0)))
           smoothedBands[b] = smoothedBands[b] * 0.45 + norm * 0.55
           newBands[b] = smoothedBands[b]

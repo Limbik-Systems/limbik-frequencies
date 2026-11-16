@@ -14,7 +14,7 @@ const path = require('path');
  * 3. Android Foreground Media Playback Service permissions
  */
 function withCarPlayAndAndroidAuto(config) {
-  // 1. iOS Info.plist: Ensure UIBackgroundModes includes 'audio'
+  // 1. iOS Info.plist: Ensure UIBackgroundModes includes 'audio' & CarPlay Scene Manifest
   config = withInfoPlist(config, (mod) => {
     const existingModes = Array.isArray(mod.modResults.UIBackgroundModes)
       ? mod.modResults.UIBackgroundModes
@@ -23,6 +23,26 @@ function withCarPlayAndAndroidAuto(config) {
       existingModes.push('audio');
     }
     mod.modResults.UIBackgroundModes = existingModes;
+
+    mod.modResults.UIApplicationSceneManifest = {
+      UIApplicationSupportsMultipleScenes: true,
+      UISceneConfigurations: {
+        UIWindowSceneSessionRoleApplication: [
+          {
+            UISceneConfigurationName: 'Default Configuration',
+            UISceneDelegateClassName: 'PhoneSceneDelegate',
+          },
+        ],
+        CPTemplateApplicationSceneSessionRoleApplication: [
+          {
+            UISceneClassName: 'CPTemplateApplicationScene',
+            UISceneConfigurationName: 'CarPlay',
+            UISceneDelegateClassName: 'CarPlaySceneDelegate',
+          },
+        ],
+      },
+    };
+
     return mod;
   });
 
