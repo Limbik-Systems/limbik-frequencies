@@ -125,3 +125,11 @@ export interface CarMediaTemplateItem {
   actionType: 'play_stream' | 'switch_quality' | 'favorite_track' | 'history_track';
   payload?: string;
 }
+
+export type EqPresetId = 'flat' | 'warm_bass' | 'idm_crisp' | 'late_night' | 'club' | 'custom';
+
+export interface EqSettings {
+  enabled: boolean;
+  presetId: EqPresetId;
+  gains: [number, number, number, number, number];
+}

@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AzuraSong, FavoriteTrack, StreamQuality } from '../types/radio';
+import { AzuraSong, EqSettings, FavoriteTrack, StreamQuality } from '../types/radio';
 
 const STORAGE_KEYS = {
   STREAM_QUALITY: '@limbikfreq/stream_quality_v1',
   FAVORITE_TRACKS: '@limbikfreq/favorite_tracks_v1',
   VOLUME: '@limbikfreq/volume_v1',
+  EQ_SETTINGS: '@limbikfreq/eq_settings_v1',
 };
 
 export async function loadPreferredQuality(): Promise<StreamQuality> {
@@ -82,4 +83,39 @@ export function songToFavorite(song: AzuraSong): FavoriteTrack {
     art: song.art || '',
     savedAt: Date.now(),
   };
+}
+
+const DEFAULT_EQ_SETTINGS: EqSettings = {
+  enabled: true,
+  presetId: 'flat',
+  gains: [0, 0, 0, 0, 0],
+};
+
+export async function loadEqSettings(): Promise<EqSettings> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.EQ_SETTINGS);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<EqSettings>;
+      if (Array.isArray(parsed.gains) && parsed.gains.length === 5) {
+        return {
+          enabled: parsed.enabled !== false,
+          presetId: parsed.presetId || 'flat',
+          gains: parsed.gains.map((g) =>
+            Math.max(-12, Math.min(12, Number(g) || 0))
+          ) as [number, number, number, number, number],
+        };
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_EQ_SETTINGS;
+}
+
+export async function saveEqSettings(settings: EqSettings): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.EQ_SETTINGS, JSON.stringify(settings));
+  } catch {
+    // ignore
+  }
 }

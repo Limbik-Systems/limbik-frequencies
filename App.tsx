@@ -20,9 +20,11 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { STATION_CONFIG, THEME } from './src/constants/station';
+import { EQ_PRESETS, STATION_CONFIG, THEME } from './src/constants/station';
 import {
   AzuraSong,
+  EqPresetId,
+  EqSettings,
   FavoriteTrack,
   NowPlayingResponse,
   RequestableSongItem,
@@ -34,8 +36,10 @@ import {
   submitSongRequest,
 } from './src/services/azuracastApi';
 import {
+  loadEqSettings,
   loadFavoriteTracks,
   loadPreferredQuality,
+  saveEqSettings,
   saveFavoriteTracks,
   savePreferredQuality,
   songToFavorite,
@@ -47,8 +51,9 @@ import {
 } from './src/services/audioEngine';
 import { syncMediaSessionMetadata } from './src/services/carIntegration';
 import { AudioMeter } from './src/components/AudioMeter';
+import { EqualizerPanel } from './src/components/EqualizerPanel';
 
-type TabKey = 'player' | 'history' | 'favorites' | 'request';
+type TabKey = 'player' | 'history' | 'favorites' | 'request' | 'eq';
 
 const fallbackLogoAsset = require('./assets/station-logo.png');
 
@@ -86,6 +91,11 @@ export default function App() {
   const [spectrumBands, setSpectrumBands] = useState<number[]>(() =>
     Array(SPECTRUM_BAND_COUNT).fill(0.06)
   );
+  const [eqSettings, setEqSettings] = useState<EqSettings>({
+    enabled: true,
+    presetId: 'flat',
+    gains: [0, 0, 0, 0, 0],
+  });
 
   // Song Requests catalog state
   const [requestQuery, setRequestQuery] = useState<string>('');
@@ -100,14 +110,17 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [savedQ, savedFavs] = await Promise.all([
+      const [savedQ, savedFavs, savedEq] = await Promise.all([
         loadPreferredQuality(),
         loadFavoriteTracks(),
+        loadEqSettings(),
       ]);
       if (!mounted) return;
       setQuality(savedQ);
       setFavorites(savedFavs);
+      setEqSettings(savedEq);
       await audioEngine.setVolume(1.0);
+      await audioEngine.setEq(savedEq.enabled, savedEq.gains);
     })();
     return () => {
       mounted = false;
@@ -198,6 +211,55 @@ export default function App() {
       await audioEngine.switchQuality(newQuality);
     },
     [quality]
+  );
+
+  const handleToggleEqEnabled = useCallback(async () => {
+    const next: EqSettings = { ...eqSettings, enabled: !eqSettings.enabled };
+    setEqSettings(next);
+    await audioEngine.setEq(next.enabled, next.gains);
+    await saveEqSettings(next);
+  }, [eqSettings]);
+
+  const handleSelectEqPreset = useCallback(
+    async (presetId: Exclude<EqPresetId, 'custom'>) => {
+      const next: EqSettings = {
+        enabled: true,
+        presetId,
+        gains: [...EQ_PRESETS[presetId].gains] as [
+          number,
+          number,
+          number,
+          number,
+          number
+        ],
+      };
+      setEqSettings(next);
+      await audioEngine.setEq(next.enabled, next.gains);
+      await saveEqSettings(next);
+    },
+    []
+  );
+
+  const handleChangeEqBandGain = useCallback(
+    async (bandIndex: number, nextGain: number) => {
+      const nextGains = [...eqSettings.gains] as [
+        number,
+        number,
+        number,
+        number,
+        number
+      ];
+      nextGains[bandIndex] = Math.max(-12, Math.min(12, nextGain));
+      const next: EqSettings = {
+        enabled: true,
+        presetId: 'custom',
+        gains: nextGains,
+      };
+      setEqSettings(next);
+      await audioEngine.setEq(next.enabled, next.gains);
+      await saveEqSettings(next);
+    },
+    [eqSettings.gains]
   );
 
   // Sync lock-screen / CarPlay / Android Auto media session metadata
@@ -948,6 +1010,16 @@ export default function App() {
               )}
             </View>
           )}
+
+          {/* TAB 5: 5-BAND PARAMETRIC EQUALIZER */}
+          {activeTab === 'eq' && (
+            <EqualizerPanel
+              settings={eqSettings}
+              onToggleEnabled={handleToggleEqEnabled}
+              onSelectPreset={handleSelectEqPreset}
+              onChangeBandGain={handleChangeEqBandGain}
+            />
+          )}
         </View>
 
         {/* Persistent Mini-Player Bar when viewing History / Favorites / Requests */}
@@ -1018,6 +1090,12 @@ export default function App() {
                 icon: 'musical-notes-outline',
                 activeIcon: 'musical-notes',
                 label: 'Request',
+              },
+              {
+                key: 'eq',
+                icon: 'options-outline',
+                activeIcon: 'options',
+                label: 'EQ',
               },
             ] as Array<{
               key: TabKey;

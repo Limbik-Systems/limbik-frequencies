@@ -33,6 +33,8 @@ final class RadioSharedCoordinator {
   private var latestBands: [Double] = Array(repeating: 0.06, count: kBandCount)
   private let artworkQueue = DispatchQueue(label: "com.limbikfreq.carplay.artwork", qos: .userInteractive)
   private var isRenderingArtwork = false
+  var eqEnabled: Bool = true
+  var eqGains: [Float] = [0, 0, 0, 0, 0]
 
   private init() {}
 
@@ -94,7 +96,17 @@ final class RadioSharedCoordinator {
       }
     )
     streamer = newStreamer
+    newStreamer.applyEq(enabled: eqEnabled, gains: eqGains)
     newStreamer.start(urlString: urlString)
+  }
+
+  func setEq(enabled: Bool, gains: [Double]) {
+    eqEnabled = enabled
+    eqGains = (0..<5).map { idx in
+      let g = idx < gains.count ? Float(gains[idx]) : 0
+      return max(-12.0, min(12.0, g))
+    }
+    streamer?.applyEq(enabled: eqEnabled, gains: eqGains)
   }
 
   func stop() {
@@ -285,6 +297,10 @@ public class RadioSpectrumModule: Module {
         artworkUrl: meta["artworkUrl"] as? String ?? ""
       )
     }
+
+    AsyncFunction("setEq") { (enabled: Bool, gains: [Double]) in
+      RadioSharedCoordinator.shared.setEq(enabled: enabled, gains: gains)
+    }
   }
 }
 
@@ -375,6 +391,7 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
 
   private let engine = AVAudioEngine()
   private let playerNode = AVAudioPlayerNode()
+  private let eqUnit = AVAudioUnitEQ(numberOfBands: 5)
   private var converter: AVAudioConverter?
   private var sourceFormat: AVAudioFormat?
   private var targetFormat: AVAudioFormat?
@@ -399,6 +416,17 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     vDSP_hann_window(&window, vDSP_Length(kFftSize), Int32(vDSP_HANN_NORM))
 
     engine.attach(playerNode)
+    engine.attach(eqUnit)
+    let eqFreqs: [Float] = [60, 230, 910, 3600, 14000]
+    for i in 0..<5 {
+      let band = eqUnit.bands[i]
+      band.filterType = (i == 0) ? .lowShelf : (i == 4 ? .highShelf : .parametric)
+      band.frequency = eqFreqs[i]
+      band.bandwidth = 1.0
+      band.gain = 0
+      band.bypass = false
+    }
+
     let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
     self.targetFormat = AVAudioFormat(
       commonFormat: .pcmFormatFloat32,
@@ -406,7 +434,8 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
       channels: 2,
       interleaved: false
     )
-    engine.connect(playerNode, to: engine.mainMixerNode, format: targetFormat)
+    engine.connect(playerNode, to: eqUnit, format: targetFormat)
+    engine.connect(eqUnit, to: engine.mainMixerNode, format: targetFormat)
 
     engine.mainMixerNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(kFftSize), format: nil) { [weak self] buffer, _ in
       self?.processTapBuffer(buffer)
@@ -417,6 +446,13 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     stop()
     if let fft = fftSetup {
       vDSP_destroy_fftsetup(fft)
+    }
+  }
+
+  func applyEq(enabled: Bool, gains: [Float]) {
+    eqUnit.bypass = !enabled
+    for i in 0..<min(5, gains.count) {
+      eqUnit.bands[i].gain = max(-12.0, min(12.0, gains[i]))
     }
   }
 

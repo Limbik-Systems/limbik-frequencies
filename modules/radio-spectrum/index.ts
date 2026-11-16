@@ -27,6 +27,7 @@ declare class RadioSpectrumNativeModule extends NativeModule<RadioSpectrumModule
   play(url: string): Promise<void>;
   stop(): Promise<void>;
   setNowPlaying(meta: NowPlayingMetadata): Promise<void>;
+  setEq(enabled: boolean, gains: number[]): Promise<void>;
 }
 
 const NativeRadioSpectrum =
@@ -49,6 +50,11 @@ export async function nativeStopStream(): Promise<void> {
 export async function nativeSetNowPlaying(meta: NowPlayingMetadata): Promise<void> {
   if (!NativeRadioSpectrum) return;
   await NativeRadioSpectrum.setNowPlaying(meta);
+}
+
+export async function nativeSetEq(enabled: boolean, gains: number[]): Promise<void> {
+  if (!NativeRadioSpectrum) return;
+  await NativeRadioSpectrum.setEq(enabled, gains);
 }
 
 export function subscribeNativeSpectrum(

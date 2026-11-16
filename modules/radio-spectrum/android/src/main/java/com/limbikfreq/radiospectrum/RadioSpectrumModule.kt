@@ -6,6 +6,7 @@ import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.audiofx.Equalizer
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.nio.ByteOrder
@@ -28,6 +29,9 @@ class RadioSpectrumModule : Module() {
   private var isRunning = false
   private var workerThread: Thread? = null
   private val smoothedBands = DoubleArray(BAND_COUNT) { 0.06 }
+  private var equalizer: Equalizer? = null
+  private var eqEnabled = true
+  private var eqGains = DoubleArray(5) { 0.0 }
 
   override fun definition() = ModuleDefinition {
     Name("RadioSpectrum")
@@ -51,6 +55,14 @@ class RadioSpectrumModule : Module() {
 
     AsyncFunction("setNowPlaying") { _: Map<String, Any?> ->
       // Handled by MediaSession / system notification layer
+    }
+
+    AsyncFunction("setEq") { enabled: Boolean, gains: List<Double> ->
+      eqEnabled = enabled
+      for (i in 0 until min(5, gains.size)) {
+        eqGains[i] = max(-12.0, min(12.0, gains[i]))
+      }
+      applyAndroidEq()
     }
   }
 
@@ -119,6 +131,11 @@ class RadioSpectrumModule : Module() {
           .build()
 
         audioTrack.play()
+        try {
+          equalizer?.release()
+          equalizer = Equalizer(0, audioTrack.audioSessionId)
+          applyAndroidEq()
+        } catch (_: Exception) {}
         sendEvent("onStateChange", mapOf("state" to "playing"))
 
         val bufferInfo = MediaCodec.BufferInfo()
@@ -175,6 +192,8 @@ class RadioSpectrumModule : Module() {
           sendEvent("onStateChange", mapOf("state" to "error", "error" to (e.message ?: "Stream error")))
         }
       } finally {
+        try { equalizer?.release() } catch (_: Exception) {}
+        equalizer = null
         try { audioTrack?.stop() } catch (_: Exception) {}
         try { audioTrack?.release() } catch (_: Exception) {}
         try { codec?.stop() } catch (_: Exception) {}
@@ -182,6 +201,23 @@ class RadioSpectrumModule : Module() {
         try { extractor?.release() } catch (_: Exception) {}
       }
     }
+  }
+
+  private fun applyAndroidEq() {
+    val eq = equalizer ?: return
+    try {
+      eq.enabled = eqEnabled
+      val numBands = eq.numberOfBands.toInt()
+      val range = eq.bandLevelRange
+      val minLevel = range[0].toDouble()
+      val maxLevel = range[1].toDouble()
+      for (b in 0 until min(numBands, 5)) {
+        val db = eqGains[b]
+        val normalized = (db + 12.0) / 24.0
+        val level = (minLevel + normalized * (maxLevel - minLevel)).toInt().toShort()
+        eq.setBandLevel(b.toShort(), level)
+      }
+    } catch (_: Exception) {}
   }
 
   private fun stopInternal() {

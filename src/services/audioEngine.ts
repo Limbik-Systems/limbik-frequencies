@@ -1,10 +1,11 @@
 import { Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS, AVPlaybackStatus } from 'expo-av';
-import { STREAM_OPTIONS } from '../constants/station';
+import { STREAM_OPTIONS, EQ_BANDS } from '../constants/station';
 import { StreamQuality } from '../types/radio';
 import {
   isNativeSpectrumAvailable,
   nativePlayStream,
+  nativeSetEq,
   nativeSetNowPlaying,
   nativeStopStream,
   NowPlayingMetadata,
@@ -31,12 +32,15 @@ class RadioAudioEngine {
   private opLock = false;
   private nativeUnsub: (() => void) | null = null;
 
-  // Web Audio API real-time FFT analyzer state
+  // Web Audio API real-time FFT analyzer & 5-band EQ state
   private webAudioEl: HTMLAudioElement | null = null;
   private webAudioCtx: AudioContext | null = null;
   private webAnalyser: AnalyserNode | null = null;
+  private webEqFilters: BiquadFilterNode[] = [];
   private webRafId: number | null = null;
   private webSmoothed = new Array<number>(SPECTRUM_BAND_COUNT).fill(0.06);
+  private eqEnabled = true;
+  private eqGains: number[] = [0, 0, 0, 0, 0];
 
   public setCallbacks(cb: AudioEngineCallbacks) {
     this.callbacks = cb;
@@ -206,6 +210,26 @@ class RadioAudioEngine {
     }
   }
 
+  public async setEq(enabled: boolean, gains: number[]): Promise<void> {
+    this.eqEnabled = enabled;
+    this.eqGains = gains.map((g) => Math.max(-12, Math.min(12, g)));
+
+    if (Platform.OS === 'web') {
+      this.webEqFilters.forEach((filter, idx) => {
+        filter.gain.value = enabled ? this.eqGains[idx] || 0 : 0;
+      });
+      return;
+    }
+
+    if (isNativeSpectrumAvailable) {
+      try {
+        await nativeSetEq(enabled, this.eqGains);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   public async setVolume(vol: number): Promise<void> {
     const clamped = Math.max(0, Math.min(1, vol));
     this.currentVolume = clamped;
@@ -243,10 +267,27 @@ class RadioAudioEngine {
     this.webAudioCtx = ctx;
 
     const source = ctx.createMediaElementSource(audioEl);
+    const filters: BiquadFilterNode[] = EQ_BANDS.map((band, idx) => {
+      const filter = ctx.createBiquadFilter();
+      filter.type =
+        idx === 0 ? 'lowshelf' : idx === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
+      filter.frequency.value = band.freq;
+      filter.Q.value = 1.0;
+      filter.gain.value = this.eqEnabled ? this.eqGains[idx] || 0 : 0;
+      return filter;
+    });
+    this.webEqFilters = filters;
+
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.72;
-    source.connect(analyser);
+
+    let chain: AudioNode = source;
+    for (const f of filters) {
+      chain.connect(f);
+      chain = f;
+    }
+    chain.connect(analyser);
     analyser.connect(ctx.destination);
     this.webAnalyser = analyser;
 
@@ -334,6 +375,7 @@ class RadioAudioEngine {
       }
       this.webAudioCtx = null;
     }
+    this.webEqFilters = [];
     this.webAnalyser = null;
   }
 
