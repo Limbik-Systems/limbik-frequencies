@@ -11,6 +11,12 @@ private let kFftSize = 2048
 private let kStream320Url = "https://limbikfreq.com/listen/limbik_frequencies/320.mp3"
 private let kStream128Url = "https://limbikfreq.com/listen/limbik_frequencies/128.mp3"
 
+struct EqBandParamSwift {
+  let freq: Float
+  let gain: Float
+  let q: Float
+}
+
 /// Shared playback & spectrum state so both the React Native bridge and CarPlaySceneDelegate
 /// stay synchronized on the same live Icecast audio stream and 52-band FFT data.
 final class RadioSharedCoordinator {
@@ -34,11 +40,11 @@ final class RadioSharedCoordinator {
   private let artworkQueue = DispatchQueue(label: "com.limbikfreq.carplay.artwork", qos: .userInteractive)
   private var isRenderingArtwork = false
   var eqEnabled: Bool = true
-  var eqBands: [(freq: Float, gain: Float, q: Float)] = [
-    (80, 0, 0.7),
-    (400, 0, 1.0),
-    (2400, 0, 1.0),
-    (10000, 0, 0.7),
+  var eqBands: [EqBandParamSwift] = [
+    EqBandParamSwift(freq: 80, gain: 0, q: 0.7),
+    EqBandParamSwift(freq: 400, gain: 0, q: 1.0),
+    EqBandParamSwift(freq: 2400, gain: 0, q: 1.0),
+    EqBandParamSwift(freq: 10000, gain: 0, q: 0.7),
   ]
 
   private init() {}
@@ -107,15 +113,15 @@ final class RadioSharedCoordinator {
 
   func setEq(enabled: Bool, bands: [[String: Any]]) {
     eqEnabled = enabled
-    var updated: [(freq: Float, gain: Float, q: Float)] = []
+    var updated: [EqBandParamSwift] = []
     for i in 0..<4 {
-      let fallback = i < eqBands.count ? eqBands[i] : (1000, 0, 1.0)
+      let fallback = i < eqBands.count ? eqBands[i] : EqBandParamSwift(freq: 1000, gain: 0, q: 1.0)
       if i < bands.count {
         let item = bands[i]
         let f = max(30.0, min(16000.0, Float((item["freq"] as? Double) ?? Double(fallback.freq))))
         let g = max(-12.0, min(12.0, Float((item["gain"] as? Double) ?? Double(fallback.gain))))
         let q = max(0.3, min(8.0, Float((item["q"] as? Double) ?? Double(fallback.q))))
-        updated.append((f, g, q))
+        updated.append(EqBandParamSwift(freq: f, gain: g, q: q))
       } else {
         updated.append(fallback)
       }
@@ -464,7 +470,7 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
     }
   }
 
-  func applyEq(enabled: Bool, bands: [(freq: Float, gain: Float, q: Float)]) {
+  func applyEq(enabled: Bool, bands: [EqBandParamSwift]) {
     eqUnit.bypass = !enabled
     for i in 0..<min(4, bands.count) {
       let b = bands[i]
