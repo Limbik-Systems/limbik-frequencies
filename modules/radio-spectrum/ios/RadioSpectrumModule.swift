@@ -4,8 +4,8 @@ import AudioToolbox
 import Accelerate
 import MediaPlayer
 
-private let kBandCount = 26
-private let kFftSize = 1024
+private let kBandCount = 52
+private let kFftSize = 2048
 
 public class RadioSpectrumModule: Module {
   private var streamer: IcecastAudioStreamer?

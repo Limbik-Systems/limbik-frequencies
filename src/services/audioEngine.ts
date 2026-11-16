@@ -13,7 +13,7 @@ import {
 
 export type PlaybackStatusState = 'stopped' | 'buffering' | 'playing' | 'error';
 
-export const SPECTRUM_BAND_COUNT = 26;
+export const SPECTRUM_BAND_COUNT = 52;
 const EMPTY_BANDS = Array(SPECTRUM_BAND_COUNT).fill(0.06);
 
 export interface AudioEngineCallbacks {
@@ -244,7 +244,7 @@ class RadioAudioEngine {
 
     const source = ctx.createMediaElementSource(audioEl);
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 1024;
+    analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.72;
     source.connect(analyser);
     analyser.connect(ctx.destination);

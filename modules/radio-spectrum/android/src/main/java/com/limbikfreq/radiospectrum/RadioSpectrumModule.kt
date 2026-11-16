@@ -20,8 +20,8 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-private const val BAND_COUNT = 26
-private const val FFT_SIZE = 1024
+private const val BAND_COUNT = 52
+private const val FFT_SIZE = 2048
 
 class RadioSpectrumModule : Module() {
   @Volatile

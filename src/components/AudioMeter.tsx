@@ -120,11 +120,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-    gap: 3,
+    gap: 1.5,
   },
   bar: {
     flex: 1,
-    borderRadius: 2,
+    borderRadius: 1.5,
     minHeight: 4,
   },
   freqScaleRow: {
