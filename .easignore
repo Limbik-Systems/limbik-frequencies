@@ -4,3 +4,4 @@ dist/
 web-build/
 npm-debug.*
 .git/
+app-store-assets/
