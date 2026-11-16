@@ -40,7 +40,11 @@ import {
   savePreferredQuality,
   songToFavorite,
 } from './src/services/storage';
-import { audioEngine, PlaybackStatusState } from './src/services/audioEngine';
+import {
+  audioEngine,
+  PlaybackStatusState,
+  SPECTRUM_BAND_COUNT,
+} from './src/services/audioEngine';
 import { syncMediaSessionMetadata } from './src/services/carIntegration';
 import { AudioMeter } from './src/components/AudioMeter';
 
@@ -79,6 +83,9 @@ export default function App() {
   const [favorites, setFavorites] = useState<FavoriteTrack[]>([]);
   const [favoritesFilter, setFavoritesFilter] = useState<string>('');
   const [localElapsed, setLocalElapsed] = useState<number>(0);
+  const [spectrumBands, setSpectrumBands] = useState<number[]>(() =>
+    Array(SPECTRUM_BAND_COUNT).fill(0.06)
+  );
 
   // Song Requests catalog state
   const [requestQuery, setRequestQuery] = useState<string>('');
@@ -123,6 +130,9 @@ export default function App() {
         } else if (state === 'stopped' || state === 'error') {
           deactivateKeepAwake('limbik-stream').catch(() => {});
         }
+      },
+      onSpectrum: (bands) => {
+        setSpectrumBands(bands);
       },
     });
   }, []);
@@ -205,6 +215,13 @@ export default function App() {
         },
       }
     );
+    const s = nowPlaying?.now_playing?.song;
+    audioEngine.updateNowPlayingMetadata({
+      title: s?.title || STATION_CONFIG.name,
+      artist: s?.artist || STATION_CONFIG.tagline,
+      album: s?.album || `${STATION_CONFIG.name} (${quality} kbps)`,
+      artworkUrl: s?.art || STATION_CONFIG.defaultArtworkUrl,
+    });
   }, [nowPlaying, quality, playbackState, handleSelectQuality]);
 
   // Favorites management
@@ -575,10 +592,11 @@ export default function App() {
                   })}
                 </View>
 
-                {/* Active Audio Signal Meter (Replaces Volume Bar) */}
+                {/* Active Real-Time FFT Audio Spectrum Meter */}
                 <AudioMeter
                   playbackState={playbackState}
                   bitrateLabel={`${quality} kbps MP3`}
+                  bands={spectrumBands}
                 />
               </View>
 

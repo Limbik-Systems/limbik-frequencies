@@ -1,11 +1,24 @@
+import { Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS, AVPlaybackStatus } from 'expo-av';
 import { STREAM_OPTIONS } from '../constants/station';
 import { StreamQuality } from '../types/radio';
+import {
+  isNativeSpectrumAvailable,
+  nativePlayStream,
+  nativeSetNowPlaying,
+  nativeStopStream,
+  NowPlayingMetadata,
+  subscribeNativeSpectrum,
+} from '../../modules/radio-spectrum';
 
 export type PlaybackStatusState = 'stopped' | 'buffering' | 'playing' | 'error';
 
+export const SPECTRUM_BAND_COUNT = 26;
+const EMPTY_BANDS = Array(SPECTRUM_BAND_COUNT).fill(0.06);
+
 export interface AudioEngineCallbacks {
   onStateChange: (state: PlaybackStatusState, errorMsg?: string) => void;
+  onSpectrum?: (bands: number[]) => void;
 }
 
 class RadioAudioEngine {
@@ -16,18 +29,42 @@ class RadioAudioEngine {
   private statusState: PlaybackStatusState = 'stopped';
   private callbacks: AudioEngineCallbacks | null = null;
   private opLock = false;
+  private nativeUnsub: (() => void) | null = null;
+
+  // Web Audio API real-time FFT analyzer state
+  private webAudioEl: HTMLAudioElement | null = null;
+  private webAudioCtx: AudioContext | null = null;
+  private webAnalyser: AnalyserNode | null = null;
+  private webRafId: number | null = null;
+  private webSmoothed = new Array<number>(SPECTRUM_BAND_COUNT).fill(0.06);
 
   public setCallbacks(cb: AudioEngineCallbacks) {
     this.callbacks = cb;
+
+    if (Platform.OS !== 'web' && isNativeSpectrumAvailable && !this.nativeUnsub) {
+      this.nativeUnsub = subscribeNativeSpectrum(
+        (ev) => {
+          this.emitState(ev.state, ev.error);
+        },
+        (ev) => {
+          if (Array.isArray(ev.bands) && ev.bands.length > 0) {
+            this.callbacks?.onSpectrum?.(ev.bands);
+          }
+        }
+      );
+    }
   }
 
   private emitState(state: PlaybackStatusState, errorMsg?: string) {
     this.statusState = state;
     this.callbacks?.onStateChange(state, errorMsg);
+    if (state === 'stopped' || state === 'error') {
+      this.callbacks?.onSpectrum?.(EMPTY_BANDS);
+    }
   }
 
   public async configureAudioSession(): Promise<void> {
-    if (this.isConfigured) return;
+    if (this.isConfigured || Platform.OS === 'web') return;
     try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
@@ -52,6 +89,16 @@ class RadioAudioEngine {
     return this.statusState;
   }
 
+  public async updateNowPlayingMetadata(meta: NowPlayingMetadata): Promise<void> {
+    if (Platform.OS !== 'web' && isNativeSpectrumAvailable) {
+      try {
+        await nativeSetNowPlaying(meta);
+      } catch {
+        // ignore metadata sync errors
+      }
+    }
+  }
+
   public async play(quality?: StreamQuality): Promise<void> {
     if (this.opLock) return;
     this.opLock = true;
@@ -61,6 +108,23 @@ class RadioAudioEngine {
         this.currentQuality = quality;
       }
 
+      const streamOption = STREAM_OPTIONS[this.currentQuality];
+      const liveUri = `${streamOption.url}?_t=${Date.now()}`;
+
+      // 1. Web: HTMLAudioElement + Web Audio AnalyserNode for real FFT spectrum
+      if (Platform.OS === 'web') {
+        await this.playWebWithAnalyser(liveUri);
+        return;
+      }
+
+      // 2. Native iOS / Android Build: Custom RadioSpectrum module with real vDSP / MediaCodec FFT
+      if (isNativeSpectrumAvailable) {
+        this.emitState('buffering');
+        await nativePlayStream(liveUri);
+        return;
+      }
+
+      // 3. Expo Go fallback (no custom native modules compiled in)
       await this.configureAudioSession();
       this.emitState('buffering');
 
@@ -68,14 +132,10 @@ class RadioAudioEngine {
         try {
           await this.sound.unloadAsync();
         } catch {
-          // ignore unload error
+          // ignore
         }
         this.sound = null;
       }
-
-      const streamOption = STREAM_OPTIONS[this.currentQuality];
-      // Append cache-busting query param so live Icecast stream starts at live edge
-      const liveUri = `${streamOption.url}?_t=${Date.now()}`;
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: liveUri },
@@ -102,6 +162,18 @@ class RadioAudioEngine {
     this.opLock = true;
 
     try {
+      if (Platform.OS === 'web') {
+        this.stopWebAudio();
+        this.emitState('stopped');
+        return;
+      }
+
+      if (isNativeSpectrumAvailable) {
+        await nativeStopStream();
+        this.emitState('stopped');
+        return;
+      }
+
       if (this.sound) {
         await this.sound.stopAsync();
         await this.sound.unloadAsync();
@@ -137,6 +209,9 @@ class RadioAudioEngine {
   public async setVolume(vol: number): Promise<void> {
     const clamped = Math.max(0, Math.min(1, vol));
     this.currentVolume = clamped;
+    if (this.webAudioEl) {
+      this.webAudioEl.volume = clamped;
+    }
     if (this.sound) {
       try {
         await this.sound.setVolumeAsync(clamped);
@@ -144,6 +219,122 @@ class RadioAudioEngine {
         // ignore
       }
     }
+  }
+
+  // MARK: - Web Audio API Real-Time FFT Spectrum
+  private async playWebWithAnalyser(uri: string): Promise<void> {
+    this.stopWebAudio();
+    this.emitState('buffering');
+
+    const audioEl = new window.Audio();
+    audioEl.crossOrigin = 'anonymous';
+    audioEl.preload = 'none';
+    audioEl.volume = this.currentVolume;
+    audioEl.src = uri;
+    this.webAudioEl = audioEl;
+
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    this.webAudioCtx = ctx;
+
+    const source = ctx.createMediaElementSource(audioEl);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.72;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    this.webAnalyser = analyser;
+
+    audioEl.onplaying = () => {
+      this.emitState('playing');
+      this.startWebSpectrumLoop();
+    };
+    audioEl.onwaiting = () => {
+      if (this.statusState !== 'stopped') {
+        this.emitState('buffering');
+      }
+    };
+    audioEl.onerror = () => {
+      this.emitState('error', 'Unable to connect to live stream');
+    };
+
+    await audioEl.play();
+  }
+
+  private startWebSpectrumLoop() {
+    if (this.webRafId !== null) {
+      cancelAnimationFrame(this.webRafId);
+    }
+
+    const analyser = this.webAnalyser;
+    const ctx = this.webAudioCtx;
+    if (!analyser || !ctx) return;
+
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    const sampleRate = ctx.sampleRate || 44100;
+    const fftSize = analyser.fftSize;
+    const minFreq = 45;
+    const maxFreq = Math.min(16000, sampleRate * 0.45);
+    let lastEmit = 0;
+
+    const tick = (ts: number) => {
+      if (!this.webAnalyser || this.statusState !== 'playing') return;
+      if (ts - lastEmit >= 32) {
+        lastEmit = ts;
+        analyser.getByteFrequencyData(freqData);
+        const bands = new Array<number>(SPECTRUM_BAND_COUNT);
+
+        for (let b = 0; b < SPECTRUM_BAND_COUNT; b++) {
+          const fLow = minFreq * Math.pow(maxFreq / minFreq, b / SPECTRUM_BAND_COUNT);
+          const fHigh = minFreq * Math.pow(maxFreq / minFreq, (b + 1) / SPECTRUM_BAND_COUNT);
+          const binLow = Math.max(1, Math.min(freqData.length - 1, Math.floor((fLow * fftSize) / sampleRate)));
+          const binHigh = Math.max(binLow, Math.min(freqData.length - 1, Math.floor((fHigh * fftSize) / sampleRate)));
+
+          let peak = 0;
+          for (let bin = binLow; bin <= binHigh; bin++) {
+            if (freqData[bin] > peak) peak = freqData[bin];
+          }
+          const norm = Math.max(0.06, Math.min(1, peak / 255));
+          this.webSmoothed[b] = this.webSmoothed[b] * 0.35 + norm * 0.65;
+          bands[b] = this.webSmoothed[b];
+        }
+
+        this.callbacks?.onSpectrum?.(bands);
+      }
+      this.webRafId = requestAnimationFrame(tick);
+    };
+
+    this.webRafId = requestAnimationFrame(tick);
+  }
+
+  private stopWebAudio() {
+    if (this.webRafId !== null) {
+      cancelAnimationFrame(this.webRafId);
+      this.webRafId = null;
+    }
+    if (this.webAudioEl) {
+      try {
+        this.webAudioEl.pause();
+        this.webAudioEl.src = '';
+      } catch {
+        // ignore
+      }
+      this.webAudioEl = null;
+    }
+    if (this.webAudioCtx) {
+      try {
+        this.webAudioCtx.close();
+      } catch {
+        // ignore
+      }
+      this.webAudioCtx = null;
+    }
+    this.webAnalyser = null;
   }
 
   private handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {

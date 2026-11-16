@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["RadioSpectrumModule"]
+  },
+  "android": {
+    "modules": ["com.limbikfreq.radiospectrum.RadioSpectrumModule"]
+  }
+}

@@ -1,88 +1,26 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/station';
-import { PlaybackStatusState } from '../services/audioEngine';
+import { PlaybackStatusState, SPECTRUM_BAND_COUNT } from '../services/audioEngine';
 
 interface AudioMeterProps {
   playbackState: PlaybackStatusState;
   bitrateLabel: string;
+  bands: number[];
 }
-
-const BAR_COUNT = 26;
 
 export const AudioMeter: React.FC<AudioMeterProps> = ({
   playbackState,
   bitrateLabel,
+  bands,
 }) => {
-  const barValues = useRef<Animated.Value[]>(
-    Array.from({ length: BAR_COUNT }, () => new Animated.Value(0.12))
-  ).current;
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    let phase = 0;
-
-    if (playbackState === 'playing') {
-      const updateBars = () => {
-        phase += 0.35;
-        const animations = barValues.map((val, idx) => {
-          // Organic multi-band spectrum motion with subtle center-weighted energy
-          const centerBias = 1 - Math.abs(idx - BAR_COUNT / 2) / (BAR_COUNT * 0.75);
-          const wave =
-            Math.sin(phase + idx * 0.55) * 0.25 +
-            Math.cos(phase * 1.4 - idx * 0.35) * 0.2;
-          const jitter = Math.random() * 0.45;
-          const target = Math.min(
-            1,
-            Math.max(0.14, (0.28 + wave + jitter) * Math.max(0.55, centerBias))
-          );
-
-          return Animated.timing(val, {
-            toValue: target,
-            duration: 110,
-            useNativeDriver: false,
-          });
-        });
-        Animated.parallel(animations).start();
-      };
-
-      updateBars();
-      timer = setInterval(updateBars, 120);
-    } else if (playbackState === 'buffering') {
-      const pulse = () => {
-        phase += 0.45;
-        const animations = barValues.map((val, idx) => {
-          const target = 0.16 + ((Math.sin(phase - idx * 0.35) + 1) / 2) * 0.24;
-          return Animated.timing(val, {
-            toValue: target,
-            duration: 160,
-            useNativeDriver: false,
-          });
-        });
-        Animated.parallel(animations).start();
-      };
-
-      pulse();
-      timer = setInterval(pulse, 170);
-    } else {
-      const resetAnimations = barValues.map((val) =>
-        Animated.timing(val, {
-          toValue: 0.1,
-          duration: 220,
-          useNativeDriver: false,
-        })
-      );
-      Animated.parallel(resetAnimations).start();
-    }
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [playbackState, barValues]);
-
   const isPlaying = playbackState === 'playing';
   const isBuffering = playbackState === 'buffering';
+  const displayBands =
+    bands.length === SPECTRUM_BAND_COUNT
+      ? bands
+      : Array(SPECTRUM_BAND_COUNT).fill(0.06);
 
   return (
     <View style={styles.container}>
@@ -95,7 +33,7 @@ export const AudioMeter: React.FC<AudioMeterProps> = ({
           />
           <Text style={styles.labelText}>
             {isPlaying
-              ? 'AUDIO SIGNAL'
+              ? 'SPECTRUM ANALYZER'
               : isBuffering
               ? 'SYNCING STREAM'
               : 'SIGNAL STANDBY'}
@@ -105,31 +43,41 @@ export const AudioMeter: React.FC<AudioMeterProps> = ({
       </View>
 
       <View style={styles.barsRow}>
-        {barValues.map((animVal, idx) => {
-          const height = animVal.interpolate({
-            inputRange: [0, 1],
-            outputRange: [3, 24],
-          });
+        {displayBands.map((level, idx) => {
+          const clamped = Math.max(0.06, Math.min(1, level));
+          const barHeight = isPlaying
+            ? Math.round(3 + clamped * 25)
+            : isBuffering
+            ? 5
+            : 3;
 
           return (
-            <Animated.View
+            <View
               key={idx}
               style={[
                 styles.bar,
                 {
-                  height,
+                  height: barHeight,
                   backgroundColor: isPlaying
-                    ? idx > BAR_COUNT * 0.8
+                    ? clamped > 0.72
+                      ? '#FFFFFF'
+                      : idx > SPECTRUM_BAND_COUNT * 0.75
                       ? THEME.primaryLight
                       : THEME.primary
                     : isBuffering
-                    ? 'rgba(120, 184, 239, 0.45)'
+                    ? 'rgba(120, 184, 239, 0.4)'
                     : '#262D3D',
                 },
               ]}
             />
           );
         })}
+      </View>
+
+      <View style={styles.freqScaleRow}>
+        <Text style={styles.freqLabel}>45 Hz</Text>
+        <Text style={styles.freqLabel}>1 kHz</Text>
+        <Text style={styles.freqLabel}>16 kHz</Text>
       </View>
     </View>
   );
@@ -144,7 +92,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    gap: 8,
+    gap: 7,
   },
   headerRow: {
     flexDirection: 'row',
@@ -168,7 +116,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   barsRow: {
-    height: 24,
+    height: 28,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
@@ -178,5 +126,14 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 2,
     minHeight: 3,
+  },
+  freqScaleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  freqLabel: {
+    color: 'rgba(222, 226, 230, 0.42)',
+    fontSize: 9,
+    fontWeight: '600',
   },
 });
