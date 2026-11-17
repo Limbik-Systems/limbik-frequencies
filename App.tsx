@@ -50,7 +50,6 @@ import {
 import {
   audioEngine,
   PlaybackStatusState,
-  SPECTRUM_BAND_COUNT,
 } from './src/services/audioEngine';
 import { syncMediaSessionMetadata } from './src/services/carIntegration';
 import { AudioMeter } from './src/components/AudioMeter';
@@ -92,9 +91,6 @@ export default function App() {
   const [favorites, setFavorites] = useState<FavoriteTrack[]>([]);
   const [favoritesFilter, setFavoritesFilter] = useState<string>('');
   const [localElapsed, setLocalElapsed] = useState<number>(0);
-  const [spectrumBands, setSpectrumBands] = useState<number[]>(() =>
-    Array(SPECTRUM_BAND_COUNT).fill(0.06)
-  );
   const [eqSettings, setEqSettings] = useState<EqSettings>({
     enabled: true,
     presetId: 'flat',
@@ -159,9 +155,6 @@ export default function App() {
         } else if (state === 'stopped' || state === 'error') {
           deactivateKeepAwake('limbik-stream').catch(() => {});
         }
-      },
-      onSpectrum: (bands) => {
-        setSpectrumBands(bands);
       },
       onEqChange: (ev) => {
         if (Array.isArray(ev.bands) && ev.bands.length === 4) {
@@ -736,7 +729,6 @@ export default function App() {
                 <AudioMeter
                   playbackState={playbackState}
                   bitrateLabel={`${quality} kbps MP3`}
-                  bands={spectrumBands}
                 />
               </View>
 

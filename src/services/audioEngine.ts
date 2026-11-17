@@ -31,6 +31,7 @@ class RadioAudioEngine {
   private isConfigured = false;
   private statusState: PlaybackStatusState = 'stopped';
   private callbacks: AudioEngineCallbacks | null = null;
+  private spectrumListeners = new Set<(bands: number[]) => void>();
   private opLock = false;
   private nativeUnsub: (() => void) | null = null;
 
@@ -44,6 +45,18 @@ class RadioAudioEngine {
   private eqEnabled = true;
   private eqBands: EqBandConfig[] = DEFAULT_EQ_BANDS.map((b) => ({ ...b }));
 
+  public subscribeSpectrum(listener: (bands: number[]) => void): () => void {
+    this.spectrumListeners.add(listener);
+    return () => {
+      this.spectrumListeners.delete(listener);
+    };
+  }
+
+  private emitSpectrum(bands: number[]) {
+    this.callbacks?.onSpectrum?.(bands);
+    this.spectrumListeners.forEach((fn) => fn(bands));
+  }
+
   public setCallbacks(cb: AudioEngineCallbacks) {
     this.callbacks = cb;
 
@@ -54,7 +67,7 @@ class RadioAudioEngine {
         },
         (ev) => {
           if (Array.isArray(ev.bands) && ev.bands.length > 0) {
-            this.callbacks?.onSpectrum?.(ev.bands);
+            this.emitSpectrum(ev.bands);
           }
         },
         (ev) => {
@@ -68,7 +81,7 @@ class RadioAudioEngine {
     this.statusState = state;
     this.callbacks?.onStateChange(state, errorMsg);
     if (state === 'stopped' || state === 'error') {
-      this.callbacks?.onSpectrum?.(EMPTY_BANDS);
+      this.emitSpectrum(EMPTY_BANDS);
     }
   }
 
@@ -363,7 +376,7 @@ class RadioAudioEngine {
           bands[b] = this.webSmoothed[b];
         }
 
-        this.callbacks?.onSpectrum?.(bands);
+        this.emitSpectrum(bands);
       }
       this.webRafId = requestAnimationFrame(tick);
     };

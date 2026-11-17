@@ -35,7 +35,11 @@ final class RadioSharedCoordinator {
   var onSpectrumEmit: (([Double]) -> Void)?
   var onEqEmit: ((Bool, String, [EqBandParamSwift]) -> Void)?
   var onCarPlayEqRefresh: (() -> Void)?
+  var onCarPlayRadioRefresh: (() -> Void)?
 
+  var isAppInBackground: Bool = false
+  private var wasInterruptedPlaying: Bool = false
+  private var observersInstalled: Bool = false
   private var latestBands: [Double] = Array(repeating: 0.06, count: kBandCount)
   var eqEnabled: Bool = true
   var eqPresetId: String = "flat"
@@ -55,12 +59,57 @@ final class RadioSharedCoordinator {
   private init() {}
 
   func configureAudioSession() {
+    installLifecycleObserversIfNeeded()
     do {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.playback, mode: .default, options: [])
       try session.setActive(true)
     } catch {
       // Ignore if already active
+    }
+  }
+
+  private func installLifecycleObserversIfNeeded() {
+    guard !observersInstalled else { return }
+    observersInstalled = true
+    let nc = NotificationCenter.default
+
+    nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+      guard let self = self,
+            let info = note.userInfo,
+            let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+            let type = AVAudioSession.InterruptionType(rawValue: typeVal) else { return }
+      if type == .began {
+        self.wasInterruptedPlaying = (self.streamer?.isPlaying == true)
+        if self.wasInterruptedPlaying {
+          self.stop()
+        }
+      } else if type == .ended {
+        let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        let opts = AVAudioSession.InterruptionOptions(rawValue: optVal)
+        if self.wasInterruptedPlaying && opts.contains(.shouldResume) {
+          self.wasInterruptedPlaying = false
+          self.play(urlString: self.currentUrl)
+        }
+      }
+    }
+
+    nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+      guard let self = self,
+            let info = note.userInfo,
+            let reasonVal = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonVal) else { return }
+      if reason == .oldDeviceUnavailable && self.streamer?.isPlaying == true {
+        self.stop()
+      }
+    }
+
+    nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.isAppInBackground = true
+    }
+
+    nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.isAppInBackground = false
     }
   }
 
@@ -197,6 +246,7 @@ final class RadioSharedCoordinator {
     currentArtist = artist
     currentAlbum = album
     pushNowPlayingInfo()
+    onCarPlayRadioRefresh?()
 
     if let url = URL(string: artworkUrl) {
       URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
@@ -302,6 +352,7 @@ class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
 @objc(CarPlaySceneDelegate)
 class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
   private var interfaceController: CPInterfaceController?
+  private var radioListTemplate: CPListTemplate?
   private var eqListTemplate: CPListTemplate?
 
   func templateApplicationScene(
@@ -315,7 +366,31 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         self?.updateEqSections()
       }
     }
+    RadioSharedCoordinator.shared.onCarPlayRadioRefresh = { [weak self] in
+      DispatchQueue.main.async {
+        self?.updateRadioSections()
+      }
+    }
 
+    let radioList = CPListTemplate(title: "Limbik", sections: buildRadioSections())
+    radioList.tabTitle = "Limbik"
+    if let radioImg = UIImage(systemName: "dot.radiowaves.left.and.right") {
+      radioList.tabImage = radioImg
+    }
+    self.radioListTemplate = radioList
+
+    let eqList = CPListTemplate(title: "Equalizer", sections: buildEqSections())
+    eqList.tabTitle = "EQ"
+    if let eqImg = UIImage(systemName: "slider.horizontal.3") {
+      eqList.tabImage = eqImg
+    }
+    self.eqListTemplate = eqList
+
+    let tabBar = CPTabBarTemplate(templates: [radioList, eqList])
+    interfaceController.setRootTemplate(tabBar, animated: false, completion: nil)
+  }
+
+  private func buildRadioSections() -> [CPListSection] {
     let nowPlayingItem = CPListItem(
       text: "Now Playing",
       detailText: "\(RadioSharedCoordinator.shared.currentTitle) — \(RadioSharedCoordinator.shared.currentArtist)"
@@ -345,22 +420,11 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
       completion()
     }
 
-    let radioSection = CPListSection(items: [nowPlayingItem, hqItem, stdItem])
-    let radioList = CPListTemplate(title: "Limbik", sections: [radioSection])
-    radioList.tabTitle = "Limbik"
-    if let radioImg = UIImage(systemName: "dot.radiowaves.left.and.right") {
-      radioList.tabImage = radioImg
-    }
+    return [CPListSection(items: [nowPlayingItem, hqItem, stdItem])]
+  }
 
-    let eqList = CPListTemplate(title: "Equalizer", sections: buildEqSections())
-    eqList.tabTitle = "EQ"
-    if let eqImg = UIImage(systemName: "slider.horizontal.3") {
-      eqList.tabImage = eqImg
-    }
-    self.eqListTemplate = eqList
-
-    let tabBar = CPTabBarTemplate(templates: [radioList, eqList])
-    interfaceController.setRootTemplate(tabBar, animated: false, completion: nil)
+  private func updateRadioSections() {
+    radioListTemplate?.updateSections(buildRadioSections())
   }
 
   private func buildEqSections() -> [CPListSection] {
@@ -411,6 +475,8 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
   ) {
     RadioSharedCoordinator.shared.isCarPlayConnected = false
     RadioSharedCoordinator.shared.onCarPlayEqRefresh = nil
+    RadioSharedCoordinator.shared.onCarPlayRadioRefresh = nil
+    self.radioListTemplate = nil
     self.eqListTemplate = nil
     self.interfaceController = nil
   }
@@ -651,7 +717,7 @@ final class IcecastAudioStreamer: NSObject, URLSessionDataDelegate {
   }
 
   private func processTapBuffer(_ buffer: AVAudioPCMBuffer) {
-    guard !stopped, isPlaying, let fftSetup = fftSetup else { return }
+    guard !stopped, isPlaying, !RadioSharedCoordinator.shared.isAppInBackground, let fftSetup = fftSetup else { return }
     let now = CFAbsoluteTimeGetCurrent()
     if now - lastEmitTime < 0.032 { return }
     lastEmitTime = now

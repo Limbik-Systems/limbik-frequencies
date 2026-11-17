@@ -1,26 +1,37 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../constants/station';
-import { PlaybackStatusState, SPECTRUM_BAND_COUNT } from '../services/audioEngine';
+import {
+  audioEngine,
+  PlaybackStatusState,
+  SPECTRUM_BAND_COUNT,
+} from '../services/audioEngine';
 
 interface AudioMeterProps {
   playbackState: PlaybackStatusState;
   bitrateLabel: string;
-  bands: number[];
 }
+
+const IDLE_BANDS = Array(SPECTRUM_BAND_COUNT).fill(0.06);
 
 export const AudioMeter: React.FC<AudioMeterProps> = ({
   playbackState,
   bitrateLabel,
-  bands,
 }) => {
+  const [bands, setBands] = useState<number[]>(IDLE_BANDS);
+
+  useEffect(() => {
+    const unsub = audioEngine.subscribeSpectrum((nextBands) => {
+      setBands(nextBands);
+    });
+    return unsub;
+  }, []);
+
   const isPlaying = playbackState === 'playing';
   const isBuffering = playbackState === 'buffering';
   const displayBands =
-    bands.length === SPECTRUM_BAND_COUNT
-      ? bands
-      : Array(SPECTRUM_BAND_COUNT).fill(0.06);
+    isPlaying && bands.length === SPECTRUM_BAND_COUNT ? bands : IDLE_BANDS;
 
   return (
     <View style={styles.container}>
