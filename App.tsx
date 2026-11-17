@@ -1134,9 +1134,6 @@ export default function App() {
           </TouchableOpacity>
         )}
 
-        {/* Unobtrusive Google AdMob Adaptive Banner docked above Bottom Navigation */}
-        <AdBanner />
-
         {/* Bottom Navigation Bar (Flat Monochromatic Vector Icons) */}
         <View style={styles.bottomNav}>
           {(
@@ -1204,6 +1201,9 @@ export default function App() {
             );
           })}
         </View>
+
+        {/* Unobtrusive Google AdMob Adaptive Banner docked below Bottom Navigation */}
+        <AdBanner />
       </SafeAreaView>
     </View>
   );
