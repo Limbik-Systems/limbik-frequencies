@@ -9,7 +9,7 @@ import { Platform } from 'react-native';
  */
 export const ADMOB_CONFIG = {
   IOS_BANNER_UNIT_ID: 'ca-app-pub-7759892583400316/6579088775',
-  ANDROID_BANNER_UNIT_ID: 'ca-app-pub-3940256099942544/6300978111',
+  ANDROID_BANNER_UNIT_ID: 'ca-app-pub-7759892583400316/6785817385',
 };
 
 export function getBannerAdUnitId(): string {
