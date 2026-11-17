@@ -28,17 +28,13 @@ final class RadioSharedCoordinator {
   var currentArtist: String = "Radio Elektro[u]nique"
   var currentAlbum: String = "Limbik Frequencies"
   var baseArtworkImage: UIImage?
-  var cachedBackdropImage: UIImage?
   var isCarPlayConnected: Bool = false
   var remoteConfigured: Bool = false
 
   var onStateEmit: ((String, String?) -> Void)?
   var onSpectrumEmit: (([Double]) -> Void)?
 
-  private var lastArtworkRenderTime: CFAbsoluteTime = 0
   private var latestBands: [Double] = Array(repeating: 0.06, count: kBandCount)
-  private let artworkQueue = DispatchQueue(label: "com.limbikfreq.carplay.artwork", qos: .userInteractive)
-  private var isRenderingArtwork = false
   var eqEnabled: Bool = true
   var eqBands: [EqBandParamSwift] = [
     EqBandParamSwift(freq: 80, gain: 0, q: 0.7),
@@ -93,17 +89,14 @@ final class RadioSharedCoordinator {
     let newStreamer = IcecastAudioStreamer(
       onState: { [weak self] state, error in
         self?.onStateEmit?(state, error)
-        if state == "playing" {
-          self?.pushNowPlayingInfo(includeAnalyzer: true)
-        } else if state == "stopped" {
-          self?.pushNowPlayingInfo(includeAnalyzer: false)
+        if state == "playing" || state == "stopped" {
+          self?.pushNowPlayingInfo()
         }
       },
       onSpectrum: { [weak self] bands in
         guard let self = self else { return }
         self.latestBands = bands
         self.onSpectrumEmit?(bands)
-        self.maybeUpdateCarPlayAnalyzerArtwork(bands: bands)
       }
     )
     streamer = newStreamer
@@ -136,146 +129,42 @@ final class RadioSharedCoordinator {
     latestBands = Array(repeating: 0.06, count: kBandCount)
     onStateEmit?("stopped", nil)
     onSpectrumEmit?(latestBands)
-    pushNowPlayingInfo(includeAnalyzer: false)
+    pushNowPlayingInfo()
   }
 
   func updateMetadata(title: String, artist: String, album: String, artworkUrl: String) {
     currentTitle = title
     currentArtist = artist
     currentAlbum = album
-    pushNowPlayingInfo(includeAnalyzer: streamer?.isPlaying == true)
+    pushNowPlayingInfo()
 
     if let url = URL(string: artworkUrl) {
       URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
         guard let self = self, let data = data, let img = UIImage(data: data) else { return }
         self.baseArtworkImage = img
-        self.cachedBackdropImage = self.buildBackdropImage(base: img)
-        self.pushNowPlayingInfo(includeAnalyzer: self.streamer?.isPlaying == true)
+        self.pushNowPlayingInfo()
       }.resume()
     }
   }
 
-  private func pushNowPlayingInfo(includeAnalyzer: Bool) {
-    let bandsSnapshot = latestBands
+  private func pushNowPlayingInfo() {
     let title = currentTitle
     let artist = currentArtist
     let album = currentAlbum
     let playing = streamer?.isPlaying == true
+    let artworkImage = baseArtworkImage
 
-    artworkQueue.async { [weak self] in
-      guard let self = self else { return }
-      let rendered = self.renderCarPlayArtwork(
-        bands: bandsSnapshot,
-        active: includeAnalyzer
-      )
-      self.isRenderingArtwork = false
-
-      DispatchQueue.main.async {
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = title
-        info[MPMediaItemPropertyArtist] = artist
-        info[MPMediaItemPropertyAlbumTitle] = album
-        info[MPNowPlayingInfoPropertyIsLiveStream] = true
-        info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
-        if let img = rendered {
-          info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
-        }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    DispatchQueue.main.async {
+      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+      info[MPMediaItemPropertyTitle] = title
+      info[MPMediaItemPropertyArtist] = artist
+      info[MPMediaItemPropertyAlbumTitle] = album
+      info[MPNowPlayingInfoPropertyIsLiveStream] = true
+      info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
+      if let img = artworkImage {
+        info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
       }
-    }
-  }
-
-  private func maybeUpdateCarPlayAnalyzerArtwork(bands: [Double]) {
-    // Target ~12.5 fps (80ms) on CarPlay using lightweight 360x360 @1x frames
-    let interval: CFAbsoluteTime = isCarPlayConnected ? 0.08 : 0.5
-    let now = CFAbsoluteTimeGetCurrent()
-    guard !isRenderingArtwork, now - lastArtworkRenderTime >= interval else { return }
-    lastArtworkRenderTime = now
-    isRenderingArtwork = true
-    pushNowPlayingInfo(includeAnalyzer: true)
-  }
-
-  private func buildBackdropImage(base: UIImage?) -> UIImage? {
-    let size = CGSize(width: 360, height: 360)
-    let fmt = UIGraphicsImageRendererFormat()
-    fmt.scale = 1.0
-    fmt.opaque = true
-    let renderer = UIGraphicsImageRenderer(size: size, format: fmt)
-    return renderer.image { ctx in
-      let cg = ctx.cgContext
-      UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 1.0).setFill()
-      cg.fill(CGRect(origin: .zero, size: size))
-
-      if let baseImg = base {
-        baseImg.draw(in: CGRect(x: 0, y: 0, width: 360, height: 360))
-      }
-
-      let panelHeight: CGFloat = 132
-      let panelY: CGFloat = size.height - panelHeight
-      let gradColors = [
-        UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 0.15).cgColor,
-        UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 0.92).cgColor,
-        UIColor(red: 0.055, green: 0.071, blue: 0.106, alpha: 0.98).cgColor,
-      ] as CFArray
-      if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: gradColors, locations: [0.0, 0.25, 1.0]) {
-        cg.drawLinearGradient(
-          gradient,
-          start: CGPoint(x: 0, y: panelY - 24),
-          end: CGPoint(x: 0, y: size.height),
-          options: []
-        )
-      }
-    }
-  }
-
-  /// Renders a fast 360x360 @1x artwork image by compositing the 52-band spectrum analyzer
-  /// over the pre-cached album backdrop.
-  private func renderCarPlayArtwork(bands: [Double], active: Bool) -> UIImage? {
-    let size = CGSize(width: 360, height: 360)
-    let fmt = UIGraphicsImageRendererFormat()
-    fmt.scale = 1.0
-    fmt.opaque = true
-    let renderer = UIGraphicsImageRenderer(size: size, format: fmt)
-    let backdrop = cachedBackdropImage ?? buildBackdropImage(base: baseArtworkImage)
-
-    return renderer.image { ctx in
-      let cg = ctx.cgContext
-      if let bg = backdrop {
-        bg.draw(at: .zero)
-      } else {
-        UIColor(red: 0.043, green: 0.055, blue: 0.078, alpha: 1.0).setFill()
-        cg.fill(CGRect(origin: .zero, size: size))
-      }
-
-      // Draw 52-Band Real-Time FFT Spectrum Bars
-      let padX: CGFloat = 14
-      let barAreaWidth = size.width - padX * 2
-      let spacing: CGFloat = 1.5
-      let barWidth = (barAreaWidth - spacing * CGFloat(kBandCount - 1)) / CGFloat(kBandCount)
-      let maxBarHeight: CGFloat = 94
-      let baseY: CGFloat = size.height - 16
-
-      for i in 0..<kBandCount {
-        let level = active ? CGFloat(max(0.06, min(1.0, bands[i]))) : 0.06
-        let h = max(4.0, level * maxBarHeight)
-        let x = padX + CGFloat(i) * (barWidth + spacing)
-        let rect = CGRect(x: x, y: baseY - h, width: barWidth, height: h)
-
-        let barColor: UIColor
-        if !active {
-          barColor = UIColor(red: 0.15, green: 0.18, blue: 0.24, alpha: 1.0)
-        } else if level > 0.72 {
-          barColor = UIColor.white
-        } else if Double(i) > Double(kBandCount) * 0.75 {
-          barColor = UIColor(red: 0.471, green: 0.722, blue: 0.937, alpha: 1.0)
-        } else {
-          barColor = UIColor(red: 0.129, green: 0.588, blue: 0.953, alpha: 1.0)
-        }
-
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: 1.5)
-        barColor.setFill()
-        path.fill()
-      }
+      MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
   }
 }
