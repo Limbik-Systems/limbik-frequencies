@@ -33,10 +33,19 @@ final class RadioSharedCoordinator {
 
   var onStateEmit: ((String, String?) -> Void)?
   var onSpectrumEmit: (([Double]) -> Void)?
+  var onEqEmit: ((Bool, String, [EqBandParamSwift]) -> Void)?
+  var onCarPlayEqRefresh: (() -> Void)?
 
   private var latestBands: [Double] = Array(repeating: 0.06, count: kBandCount)
   var eqEnabled: Bool = true
+  var eqPresetId: String = "flat"
   var eqBands: [EqBandParamSwift] = [
+    EqBandParamSwift(freq: 80, gain: 0, q: 0.7),
+    EqBandParamSwift(freq: 400, gain: 0, q: 1.0),
+    EqBandParamSwift(freq: 2400, gain: 0, q: 1.0),
+    EqBandParamSwift(freq: 10000, gain: 0, q: 0.7),
+  ]
+  var userEqBands: [EqBandParamSwift] = [
     EqBandParamSwift(freq: 80, gain: 0, q: 0.7),
     EqBandParamSwift(freq: 400, gain: 0, q: 1.0),
     EqBandParamSwift(freq: 2400, gain: 0, q: 1.0),
@@ -104,23 +113,74 @@ final class RadioSharedCoordinator {
     newStreamer.start(urlString: urlString)
   }
 
-  func setEq(enabled: Bool, bands: [[String: Any]]) {
-    eqEnabled = enabled
+  private func parseBands(_ raw: [[String: Any]], fallback: [EqBandParamSwift]) -> [EqBandParamSwift] {
     var updated: [EqBandParamSwift] = []
     for i in 0..<4 {
-      let fallback = i < eqBands.count ? eqBands[i] : EqBandParamSwift(freq: 1000, gain: 0, q: 1.0)
-      if i < bands.count {
-        let item = bands[i]
-        let f = max(30.0, min(16000.0, Float((item["freq"] as? Double) ?? Double(fallback.freq))))
-        let g = max(-12.0, min(12.0, Float((item["gain"] as? Double) ?? Double(fallback.gain))))
-        let q = max(0.3, min(8.0, Float((item["q"] as? Double) ?? Double(fallback.q))))
+      let fb = i < fallback.count ? fallback[i] : EqBandParamSwift(freq: 1000, gain: 0, q: 1.0)
+      if i < raw.count {
+        let item = raw[i]
+        let f = max(30.0, min(16000.0, Float((item["freq"] as? Double) ?? Double(fb.freq))))
+        let g = max(-12.0, min(12.0, Float((item["gain"] as? Double) ?? Double(fb.gain))))
+        let q = max(0.3, min(8.0, Float((item["q"] as? Double) ?? Double(fb.q))))
         updated.append(EqBandParamSwift(freq: f, gain: g, q: q))
       } else {
-        updated.append(fallback)
+        updated.append(fb)
       }
     }
-    eqBands = updated
+    return updated
+  }
+
+  func setEq(enabled: Bool, bands: [[String: Any]], presetId: String?, userBands: [[String: Any]]?) {
+    eqEnabled = enabled
+    if let pid = presetId { eqPresetId = pid }
+    eqBands = parseBands(bands, fallback: eqBands)
+    if let ub = userBands {
+      userEqBands = parseBands(ub, fallback: userEqBands)
+    }
     streamer?.applyEq(enabled: eqEnabled, bands: eqBands)
+    onCarPlayEqRefresh?()
+  }
+
+  func applyCarPlayEqPreset(_ presetId: String) {
+    eqEnabled = true
+    eqPresetId = presetId
+    switch presetId {
+    case "flat":
+      eqBands = [
+        EqBandParamSwift(freq: 80, gain: 0, q: 0.7),
+        EqBandParamSwift(freq: 400, gain: 0, q: 1.0),
+        EqBandParamSwift(freq: 2400, gain: 0, q: 1.0),
+        EqBandParamSwift(freq: 10000, gain: 0, q: 0.7),
+      ]
+    case "warm":
+      eqBands = [
+        EqBandParamSwift(freq: 75, gain: 5, q: 0.8),
+        EqBandParamSwift(freq: 320, gain: 2.5, q: 1.1),
+        EqBandParamSwift(freq: 2200, gain: 0.5, q: 1.0),
+        EqBandParamSwift(freq: 10000, gain: 1.5, q: 0.7),
+      ]
+    case "crisp":
+      eqBands = [
+        EqBandParamSwift(freq: 65, gain: 3.5, q: 0.9),
+        EqBandParamSwift(freq: 500, gain: -1.5, q: 1.4),
+        EqBandParamSwift(freq: 3200, gain: 3.5, q: 1.2),
+        EqBandParamSwift(freq: 12000, gain: 4.5, q: 0.8),
+      ]
+    case "user":
+      eqBands = userEqBands
+    default:
+      break
+    }
+    streamer?.applyEq(enabled: eqEnabled, bands: eqBands)
+    onEqEmit?(eqEnabled, eqPresetId, eqBands)
+    onCarPlayEqRefresh?()
+  }
+
+  func toggleCarPlayEqEnabled() {
+    eqEnabled = !eqEnabled
+    streamer?.applyEq(enabled: eqEnabled, bands: eqBands)
+    onEqEmit?(eqEnabled, eqPresetId, eqBands)
+    onCarPlayEqRefresh?()
   }
 
   func stop() {
@@ -173,7 +233,7 @@ public class RadioSpectrumModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RadioSpectrum")
 
-    Events("onStateChange", "onSpectrum")
+    Events("onStateChange", "onSpectrum", "onEqChange")
 
     OnCreate {
       let coord = RadioSharedCoordinator.shared
@@ -184,6 +244,10 @@ public class RadioSpectrumModule: Module {
       }
       coord.onSpectrumEmit = { [weak self] bands in
         self?.sendEvent("onSpectrum", ["bands": bands])
+      }
+      coord.onEqEmit = { [weak self] enabled, presetId, bands in
+        let serialized = bands.map { ["freq": Double($0.freq), "gain": Double($0.gain), "q": Double($0.q)] }
+        self?.sendEvent("onEqChange", ["enabled": enabled, "presetId": presetId, "bands": serialized])
       }
     }
 
@@ -208,8 +272,8 @@ public class RadioSpectrumModule: Module {
       )
     }
 
-    AsyncFunction("setEq") { (enabled: Bool, bands: [[String: Any]]) in
-      RadioSharedCoordinator.shared.setEq(enabled: enabled, bands: bands)
+    AsyncFunction("setEq") { (enabled: Bool, bands: [[String: Any]], presetId: String?, userBands: [[String: Any]]?) in
+      RadioSharedCoordinator.shared.setEq(enabled: enabled, bands: bands, presetId: presetId, userBands: userBands)
     }
   }
 }
@@ -238,6 +302,7 @@ class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
 @objc(CarPlaySceneDelegate)
 class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
   private var interfaceController: CPInterfaceController?
+  private var eqListTemplate: CPListTemplate?
 
   func templateApplicationScene(
     _ templateApplicationScene: CPTemplateApplicationScene,
@@ -245,6 +310,11 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
   ) {
     self.interfaceController = interfaceController
     RadioSharedCoordinator.shared.isCarPlayConnected = true
+    RadioSharedCoordinator.shared.onCarPlayEqRefresh = { [weak self] in
+      DispatchQueue.main.async {
+        self?.updateEqSections()
+      }
+    }
 
     let nowPlayingItem = CPListItem(
       text: "Now Playing",
@@ -275,10 +345,64 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
       completion()
     }
 
-    let section = CPListSection(items: [nowPlayingItem, hqItem, stdItem])
-    let listTemplate = CPListTemplate(title: "Limbik Frequencies", sections: [section])
+    let radioSection = CPListSection(items: [nowPlayingItem, hqItem, stdItem])
+    let radioList = CPListTemplate(title: "Limbik", sections: [radioSection])
+    radioList.tabTitle = "Limbik"
+    if let radioImg = UIImage(systemName: "dot.radiowaves.left.and.right") {
+      radioList.tabImage = radioImg
+    }
 
-    interfaceController.setRootTemplate(listTemplate, animated: false, completion: nil)
+    let eqList = CPListTemplate(title: "Equalizer", sections: buildEqSections())
+    eqList.tabTitle = "EQ"
+    if let eqImg = UIImage(systemName: "slider.horizontal.3") {
+      eqList.tabImage = eqImg
+    }
+    self.eqListTemplate = eqList
+
+    let tabBar = CPTabBarTemplate(templates: [radioList, eqList])
+    interfaceController.setRootTemplate(tabBar, animated: false, completion: nil)
+  }
+
+  private func buildEqSections() -> [CPListSection] {
+    let coord = RadioSharedCoordinator.shared
+
+    let powerItem = CPListItem(
+      text: coord.eqEnabled ? "EQ: ON" : "EQ: BYPASSED",
+      detailText: coord.eqEnabled ? "Tap to bypass equalizer" : "Tap to enable equalizer"
+    )
+    powerItem.handler = { _, completion in
+      RadioSharedCoordinator.shared.toggleCarPlayEqEnabled()
+      completion()
+    }
+
+    let presets: [(id: String, title: String, desc: String)] = [
+      ("flat", "Flat", "0 dB across all 4 bands"),
+      ("warm", "Warm", "75 Hz +5 dB • 320 Hz +2.5 dB"),
+      ("crisp", "Crisp", "65 Hz +3.5 dB • 3.2 kHz +3.5 dB • 12 kHz +4.5 dB"),
+      ("user", "User", "Your saved custom 4-band preset"),
+    ]
+
+    let presetItems = presets.map { p -> CPListItem in
+      let isActive = coord.eqEnabled && coord.eqPresetId == p.id
+      let item = CPListItem(
+        text: isActive ? "✓ \(p.title)" : p.title,
+        detailText: isActive ? "ACTIVE • \(p.desc)" : p.desc
+      )
+      item.handler = { _, completion in
+        RadioSharedCoordinator.shared.applyCarPlayEqPreset(p.id)
+        completion()
+      }
+      return item
+    }
+
+    return [
+      CPListSection(items: [powerItem]),
+      CPListSection(items: presetItems, header: "Presets", sectionIndexTitle: nil),
+    ]
+  }
+
+  private func updateEqSections() {
+    eqListTemplate?.updateSections(buildEqSections())
   }
 
   func templateApplicationScene(
@@ -286,6 +410,8 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     didDisconnectInterfaceController interfaceController: CPInterfaceController
   ) {
     RadioSharedCoordinator.shared.isCarPlayConnected = false
+    RadioSharedCoordinator.shared.onCarPlayEqRefresh = nil
+    self.eqListTemplate = nil
     self.interfaceController = nil
   }
 }

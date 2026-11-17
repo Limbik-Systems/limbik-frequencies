@@ -40,9 +40,11 @@ import {
   loadEqSettings,
   loadFavoriteTracks,
   loadPreferredQuality,
+  loadUserEqPreset,
   saveEqSettings,
   saveFavoriteTracks,
   savePreferredQuality,
+  saveUserEqPreset,
   songToFavorite,
 } from './src/services/storage';
 import {
@@ -98,6 +100,11 @@ export default function App() {
     presetId: 'flat',
     bands: DEFAULT_EQ_BANDS,
   });
+  const [userEqBands, setUserEqBands] = useState<
+    [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig]
+  >(DEFAULT_EQ_BANDS);
+  const userEqBandsRef = useRef(userEqBands);
+  userEqBandsRef.current = userEqBands;
 
   // Song Requests catalog state
   const [requestQuery, setRequestQuery] = useState<string>('');
@@ -112,17 +119,24 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [savedQ, savedFavs, savedEq] = await Promise.all([
+      const [savedQ, savedFavs, savedEq, savedUserBands] = await Promise.all([
         loadPreferredQuality(),
         loadFavoriteTracks(),
         loadEqSettings(),
+        loadUserEqPreset(),
       ]);
       if (!mounted) return;
       setQuality(savedQ);
       setFavorites(savedFavs);
       setEqSettings(savedEq);
+      setUserEqBands(savedUserBands);
       await audioEngine.setVolume(1.0);
-      await audioEngine.setEq(savedEq.enabled, savedEq.bands);
+      await audioEngine.setEq(
+        savedEq.enabled,
+        savedEq.bands,
+        savedEq.presetId,
+        savedUserBands
+      );
     })();
     return () => {
       mounted = false;
@@ -148,6 +162,21 @@ export default function App() {
       },
       onSpectrum: (bands) => {
         setSpectrumBands(bands);
+      },
+      onEqChange: (ev) => {
+        if (Array.isArray(ev.bands) && ev.bands.length === 4) {
+          const next: EqSettings = {
+            enabled: ev.enabled,
+            presetId: (ev.presetId as EqPresetId) || 'custom',
+            bands: ev.bands.map((b) => ({
+              freq: b.freq,
+              gain: b.gain,
+              q: b.q,
+            })) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig],
+          };
+          setEqSettings(next);
+          saveEqSettings(next);
+        }
       },
     });
   }, []);
@@ -218,18 +247,28 @@ export default function App() {
   const handleToggleEqEnabled = useCallback(() => {
     setEqSettings((prev) => {
       const next: EqSettings = { ...prev, enabled: !prev.enabled };
-      audioEngine.setEq(next.enabled, next.bands);
+      audioEngine.setEq(
+        next.enabled,
+        next.bands,
+        next.presetId,
+        userEqBandsRef.current
+      );
       saveEqSettings(next);
       return next;
     });
   }, []);
 
   const handleSelectEqPreset = useCallback(
-    (presetId: Exclude<EqPresetId, 'custom'>) => {
+    (presetId: 'flat' | 'warm' | 'crisp' | 'user') => {
+      const sourceBands =
+        presetId === 'user'
+          ? userEqBandsRef.current
+          : EQ_PRESETS[presetId].bands;
+
       const next: EqSettings = {
         enabled: true,
         presetId,
-        bands: EQ_PRESETS[presetId].bands.map((b) => ({ ...b })) as [
+        bands: sourceBands.map((b) => ({ ...b })) as [
           EqBandConfig,
           EqBandConfig,
           EqBandConfig,
@@ -237,11 +276,39 @@ export default function App() {
         ],
       };
       setEqSettings(next);
-      audioEngine.setEq(next.enabled, next.bands);
+      audioEngine.setEq(
+        next.enabled,
+        next.bands,
+        next.presetId,
+        userEqBandsRef.current
+      );
       saveEqSettings(next);
     },
     []
   );
+
+  const handleSaveUserPreset = useCallback(() => {
+    setEqSettings((prev) => {
+      const savedCopy = prev.bands.map((b) => ({ ...b })) as [
+        EqBandConfig,
+        EqBandConfig,
+        EqBandConfig,
+        EqBandConfig
+      ];
+      setUserEqBands(savedCopy);
+      userEqBandsRef.current = savedCopy;
+      saveUserEqPreset(savedCopy);
+
+      const next: EqSettings = {
+        enabled: true,
+        presetId: 'user',
+        bands: savedCopy,
+      };
+      audioEngine.setEq(next.enabled, next.bands, 'user', savedCopy);
+      saveEqSettings(next);
+      return next;
+    });
+  }, []);
 
   const handleUpdateEqBand = useCallback(
     (bandIndex: number, patch: Partial<EqBandConfig>) => {
@@ -260,7 +327,12 @@ export default function App() {
           presetId: 'custom',
           bands: nextBands,
         };
-        audioEngine.setEq(next.enabled, next.bands);
+        audioEngine.setEq(
+          next.enabled,
+          next.bands,
+          next.presetId,
+          userEqBandsRef.current
+        );
         saveEqSettings(next);
         return next;
       });
@@ -1023,6 +1095,7 @@ export default function App() {
               settings={eqSettings}
               onToggleEnabled={handleToggleEqEnabled}
               onSelectPreset={handleSelectEqPreset}
+              onSaveUserPreset={handleSaveUserPreset}
               onUpdateBand={handleUpdateEqBand}
             />
           )}

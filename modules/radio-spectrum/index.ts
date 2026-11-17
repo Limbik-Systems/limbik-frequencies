@@ -18,9 +18,16 @@ export interface NowPlayingMetadata {
   artworkUrl: string;
 }
 
+export interface RadioEqChangeEvent {
+  enabled: boolean;
+  presetId: string;
+  bands: EqBandParam[];
+}
+
 type RadioSpectrumModuleEvents = {
   onStateChange(event: RadioSpectrumStateEvent): void;
   onSpectrum(event: RadioSpectrumBandsEvent): void;
+  onEqChange(event: RadioEqChangeEvent): void;
 };
 
 export interface EqBandParam {
@@ -33,7 +40,12 @@ declare class RadioSpectrumNativeModule extends NativeModule<RadioSpectrumModule
   play(url: string): Promise<void>;
   stop(): Promise<void>;
   setNowPlaying(meta: NowPlayingMetadata): Promise<void>;
-  setEq(enabled: boolean, bands: EqBandParam[]): Promise<void>;
+  setEq(
+    enabled: boolean,
+    bands: EqBandParam[],
+    presetId?: string,
+    userBands?: EqBandParam[]
+  ): Promise<void>;
 }
 
 const NativeRadioSpectrum =
@@ -58,20 +70,30 @@ export async function nativeSetNowPlaying(meta: NowPlayingMetadata): Promise<voi
   await NativeRadioSpectrum.setNowPlaying(meta);
 }
 
-export async function nativeSetEq(enabled: boolean, bands: EqBandParam[]): Promise<void> {
+export async function nativeSetEq(
+  enabled: boolean,
+  bands: EqBandParam[],
+  presetId?: string,
+  userBands?: EqBandParam[]
+): Promise<void> {
   if (!NativeRadioSpectrum) return;
-  await NativeRadioSpectrum.setEq(enabled, bands);
+  await NativeRadioSpectrum.setEq(enabled, bands, presetId, userBands);
 }
 
 export function subscribeNativeSpectrum(
   onStateChange: (ev: RadioSpectrumStateEvent) => void,
-  onSpectrum: (ev: RadioSpectrumBandsEvent) => void
+  onSpectrum: (ev: RadioSpectrumBandsEvent) => void,
+  onEqChange?: (ev: RadioEqChangeEvent) => void
 ): () => void {
   if (!NativeRadioSpectrum) return () => {};
   const sub1 = NativeRadioSpectrum.addListener('onStateChange', onStateChange);
   const sub2 = NativeRadioSpectrum.addListener('onSpectrum', onSpectrum);
+  const sub3 = onEqChange
+    ? NativeRadioSpectrum.addListener('onEqChange', onEqChange)
+    : null;
   return () => {
     sub1.remove();
     sub2.remove();
+    sub3?.remove();
   };
 }

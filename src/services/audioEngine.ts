@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS, AVPlaybackStatus } from 'expo-av';
 import { DEFAULT_EQ_BANDS, STREAM_OPTIONS } from '../constants/station';
-import { EqBandConfig, StreamQuality } from '../types/radio';
+import { EqBandConfig, EqPresetId, StreamQuality } from '../types/radio';
 import {
   isNativeSpectrumAvailable,
   nativePlayStream,
@@ -9,6 +9,7 @@ import {
   nativeSetNowPlaying,
   nativeStopStream,
   NowPlayingMetadata,
+  RadioEqChangeEvent,
   subscribeNativeSpectrum,
 } from '../../modules/radio-spectrum';
 
@@ -20,6 +21,7 @@ const EMPTY_BANDS = Array(SPECTRUM_BAND_COUNT).fill(0.06);
 export interface AudioEngineCallbacks {
   onStateChange: (state: PlaybackStatusState, errorMsg?: string) => void;
   onSpectrum?: (bands: number[]) => void;
+  onEqChange?: (ev: RadioEqChangeEvent) => void;
 }
 
 class RadioAudioEngine {
@@ -54,6 +56,9 @@ class RadioAudioEngine {
           if (Array.isArray(ev.bands) && ev.bands.length > 0) {
             this.callbacks?.onSpectrum?.(ev.bands);
           }
+        },
+        (ev) => {
+          this.callbacks?.onEqChange?.(ev);
         }
       );
     }
@@ -210,7 +215,12 @@ class RadioAudioEngine {
     }
   }
 
-  public async setEq(enabled: boolean, bands: EqBandConfig[]): Promise<void> {
+  public async setEq(
+    enabled: boolean,
+    bands: EqBandConfig[],
+    presetId?: EqPresetId,
+    userBands?: EqBandConfig[]
+  ): Promise<void> {
     this.eqEnabled = enabled;
     this.eqBands = bands.slice(0, 4).map((b) => ({
       freq: Math.max(30, Math.min(16000, b.freq)),
@@ -231,7 +241,7 @@ class RadioAudioEngine {
 
     if (isNativeSpectrumAvailable) {
       try {
-        await nativeSetEq(enabled, this.eqBands);
+        await nativeSetEq(enabled, this.eqBands, presetId, userBands);
       } catch {
         // ignore
       }

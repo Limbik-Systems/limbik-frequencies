@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   FAVORITE_TRACKS: '@limbikfreq/favorite_tracks_v1',
   VOLUME: '@limbikfreq/volume_v1',
   EQ_SETTINGS: '@limbikfreq/eq_settings_v2',
+  USER_EQ_PRESET: '@limbikfreq/user_eq_preset_v1',
 };
 
 export async function loadPreferredQuality(): Promise<StreamQuality> {
@@ -119,6 +120,42 @@ export async function loadEqSettings(): Promise<EqSettings> {
 export async function saveEqSettings(settings: EqSettings): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEYS.EQ_SETTINGS, JSON.stringify(settings));
+  } catch {
+    // ignore
+  }
+}
+
+export async function loadUserEqPreset(): Promise<
+  [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig]
+> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.USER_EQ_PRESET);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 4) {
+        return parsed.map((b, i) => ({
+          freq: Math.max(30, Math.min(16000, Number(b?.freq) || DEFAULT_EQ_BANDS[i].freq)),
+          gain: Math.max(-12, Math.min(12, Number(b?.gain) || 0)),
+          q: Math.max(0.3, Math.min(8.0, Number(b?.q) || DEFAULT_EQ_BANDS[i].q)),
+        })) as [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_EQ_BANDS.map((b) => ({ ...b })) as [
+    EqBandConfig,
+    EqBandConfig,
+    EqBandConfig,
+    EqBandConfig
+  ];
+}
+
+export async function saveUserEqPreset(
+  bands: [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig]
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_EQ_PRESET, JSON.stringify(bands));
   } catch {
     // ignore
   }

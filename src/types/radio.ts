@@ -126,7 +126,7 @@ export interface CarMediaTemplateItem {
   payload?: string;
 }
 
-export type EqPresetId = 'flat' | 'warm_bass' | 'idm_crisp' | 'late_night' | 'club' | 'custom';
+export type EqPresetId = 'flat' | 'warm' | 'crisp' | 'user' | 'custom';
 
 export interface EqBandConfig {
   freq: number; // Hz: 30 .. 16000

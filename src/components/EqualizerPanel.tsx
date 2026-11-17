@@ -9,22 +9,22 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { EQ_PRESETS, THEME } from '../constants/station';
-import { EqBandConfig, EqPresetId, EqSettings } from '../types/radio';
+import { THEME } from '../constants/station';
+import { EqBandConfig, EqSettings } from '../types/radio';
 
 interface EqualizerPanelProps {
   settings: EqSettings;
   onToggleEnabled: () => void;
-  onSelectPreset: (presetId: Exclude<EqPresetId, 'custom'>) => void;
+  onSelectPreset: (presetId: 'flat' | 'warm' | 'crisp' | 'user') => void;
+  onSaveUserPreset: () => void;
   onUpdateBand: (bandIndex: number, patch: Partial<EqBandConfig>) => void;
 }
 
-const PRESET_KEYS: Array<Exclude<EqPresetId, 'custom'>> = [
-  'flat',
-  'warm_bass',
-  'idm_crisp',
-  'late_night',
-  'club',
+const PRESET_ITEMS: Array<{ id: 'flat' | 'warm' | 'crisp' | 'user'; label: string }> = [
+  { id: 'flat', label: 'Flat' },
+  { id: 'warm', label: 'Warm' },
+  { id: 'crisp', label: 'Crisp' },
+  { id: 'user', label: 'User' },
 ];
 
 const BAND_LABELS = ['Low Shelf', 'Peak 2', 'Peak 3', 'High Shelf'];
@@ -125,9 +125,11 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
   settings,
   onToggleEnabled,
   onSelectPreset,
+  onSaveUserPreset,
   onUpdateBand,
 }) => {
   const [selectedBand, setSelectedBand] = useState<number>(0);
+  const [userSavedToast, setUserSavedToast] = useState<boolean>(false);
   const [graphWidth, setGraphWidth] = useState<number>(300);
   const activeDragBandRef = useRef<number>(0);
   const settingsRef = useRef<EqSettings>(settings);
@@ -283,19 +285,19 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Presets Row */}
+        {/* Presets Row: Flat, Warm, Crisp, User + Save to User */}
         <View style={styles.presetsCard}>
           <View style={styles.presetsScrollRow}>
-            {PRESET_KEYS.map((key) => {
-              const active = settings.presetId === key;
+            {PRESET_ITEMS.map((item) => {
+              const active = settings.presetId === item.id;
               return (
                 <TouchableOpacity
-                  key={key}
+                  key={item.id}
                   style={[
                     styles.presetChip,
                     active && styles.presetChipActive,
                   ]}
-                  onPress={() => onSelectPreset(key)}
+                  onPress={() => onSelectPreset(item.id)}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -305,11 +307,30 @@ export const EqualizerPanel: React.FC<EqualizerPanelProps> = ({
                     ]}
                     numberOfLines={1}
                   >
-                    {EQ_PRESETS[key].label}
+                    {item.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
+
+            <TouchableOpacity
+              style={styles.saveUserBtn}
+              onPress={() => {
+                onSaveUserPreset();
+                setUserSavedToast(true);
+                setTimeout(() => setUserSavedToast(false), 1600);
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={userSavedToast ? 'checkmark' : 'bookmark-outline'}
+                size={13}
+                color={THEME.primaryLight}
+              />
+              <Text style={styles.saveUserBtnText} numberOfLines={1}>
+                {userSavedToast ? 'Saved!' : 'Save User'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -665,6 +686,23 @@ const styles = StyleSheet.create({
   },
   presetChipTextActive: {
     color: '#FFFFFF',
+  },
+  saveUserBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(33, 150, 243, 0.14)',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: THEME.primary,
+  },
+  saveUserBtnText: {
+    color: THEME.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
   },
   graphCard: {
     backgroundColor: '#151A26',

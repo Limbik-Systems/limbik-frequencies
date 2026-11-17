@@ -72,7 +72,7 @@ export const DEFAULT_EQ_BANDS: [
 ];
 
 export const EQ_PRESETS: Record<
-  Exclude<EqPresetId, 'custom'>,
+  'flat' | 'warm' | 'crisp',
   {
     label: string;
     bands: [EqBandConfig, EqBandConfig, EqBandConfig, EqBandConfig];
@@ -87,8 +87,8 @@ export const EQ_PRESETS: Record<
       { freq: 10000, gain: 0, q: 0.7 },
     ],
   },
-  warm_bass: {
-    label: 'Warm Bass',
+  warm: {
+    label: 'Warm',
     bands: [
       { freq: 75, gain: 5, q: 0.8 },
       { freq: 320, gain: 2.5, q: 1.1 },
@@ -96,31 +96,13 @@ export const EQ_PRESETS: Record<
       { freq: 10000, gain: 1.5, q: 0.7 },
     ],
   },
-  idm_crisp: {
-    label: 'IDM Crisp',
+  crisp: {
+    label: 'Crisp',
     bands: [
       { freq: 65, gain: 3.5, q: 0.9 },
       { freq: 500, gain: -1.5, q: 1.4 },
       { freq: 3200, gain: 3.5, q: 1.2 },
       { freq: 12000, gain: 4.5, q: 0.8 },
-    ],
-  },
-  late_night: {
-    label: 'Late Night',
-    bands: [
-      { freq: 90, gain: 2, q: 0.7 },
-      { freq: 800, gain: -2, q: 1.2 },
-      { freq: 3000, gain: 1.5, q: 1.0 },
-      { freq: 9500, gain: 2, q: 0.7 },
-    ],
-  },
-  club: {
-    label: 'Club',
-    bands: [
-      { freq: 60, gain: 6, q: 0.9 },
-      { freq: 350, gain: -2, q: 1.5 },
-      { freq: 2600, gain: 3, q: 1.1 },
-      { freq: 11000, gain: 4, q: 0.8 },
     ],
   },
 };
