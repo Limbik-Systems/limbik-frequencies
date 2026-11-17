@@ -25,8 +25,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0B0E14',
-    borderTopWidth: 1,
-    borderTopColor: THEME.border,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
     paddingVertical: 2,
   },
   previewBox: {

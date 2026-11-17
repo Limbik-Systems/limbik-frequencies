@@ -465,6 +465,9 @@ export default function App() {
     <View style={styles.rootContainer}>
       <StatusBar style="light" />
       <SafeAreaView style={styles.safeArea}>
+        {/* Unobtrusive Google AdMob Adaptive Banner docked at the very top */}
+        <AdBanner />
+
         {/* Top Station Header Bar (Clean, no Car button) */}
         <View style={styles.topBar}>
           <View style={styles.brandRow}>
@@ -1201,9 +1204,6 @@ export default function App() {
             );
           })}
         </View>
-
-        {/* Unobtrusive Google AdMob Adaptive Banner docked below Bottom Navigation */}
-        <AdBanner />
       </SafeAreaView>
     </View>
   );
